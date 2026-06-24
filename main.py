@@ -27,14 +27,17 @@ GREEN_KEY = (0, 255, 0)
 MAIN_MUSIC = _asset(os.path.join("audio", "main.mp3"))
 LEVEL_MUSIC = _asset(os.path.join("audio", "level.mp3"))
 
-MUSIC_VOLUME = 0.45
+VOL = {"music": 0.45, "sfx": 0.5}
 _current_music = None
 
 PLAYER_SPEED = 5.0
 BULLET_SPEED = 10.0
 FIRE_COOLDOWN = 170  # ms
 
-START_LIVES = 3
+DIFF_OPTIONS = ["easy", "normal", "hard"]
+LIVES_BY_DIFFICULTY = {"easy": 5, "normal": 3, "hard": 1}
+START_LIVES = 3  # kept as fallback default
+
 BASE_ENEMY_SPEED = 3.0
 SPEED_INCREASE_EVERY = 90
 BIG_ENEMY_EVERY = 30
@@ -98,6 +101,7 @@ BOOM_SOUND = make_tone(freq=110, duration=0.22, volume=0.45, noise=True)
 def play(sound):
     if sound:
         try:
+            sound.set_volume(VOL["sfx"])
             sound.play()
         except pygame.error:
             pass
@@ -127,7 +131,7 @@ def set_music(track):
 
         if os.path.exists(path):
             pygame.mixer.music.load(path)
-            pygame.mixer.music.set_volume(MUSIC_VOLUME)
+            pygame.mixer.music.set_volume(VOL["music"])
             pygame.mixer.music.play(-1)  # loop forever
             _current_music = track
         else:
@@ -406,12 +410,12 @@ class DistantObject:
 # ------------------------------------------------------------
 
 class Player:
-    def __init__(self):
+    def __init__(self, lives=START_LIVES):
         self.image = ASSETS["player"]
         self.rect = self.image.get_rect()
         self.rect.x = 55
         self.rect.centery = HEIGHT // 2
-        self.lives = START_LIVES
+        self.lives = lives
         self.blink_timer = 0
         self.invuln_timer = 0
 
@@ -599,10 +603,15 @@ class Explosion:
 
 class Game:
     def __init__(self):
+        # Persistent across resets
+        self.diff_cursor = 1       # index into DIFF_OPTIONS; 1 = "normal"
+        self.options_cursor = 0    # 0 = music slider, 1 = sfx slider
         self.reset(to_menu=True)
 
-    def reset(self, to_menu=False):
-        self.player = Player()
+    def reset(self, to_menu=False, lives=None):
+        if lives is None:
+            lives = LIVES_BY_DIFFICULTY[DIFF_OPTIONS[self.diff_cursor]]
+        self.player = Player(lives=lives)
         self.bullets = []
         self.enemies = []
         self.explosions = []
@@ -643,8 +652,8 @@ class Game:
             set_music("level")
 
     def start_game(self):
-        self.reset(to_menu=False)
-        set_music("level")
+        lives = LIVES_BY_DIFFICULTY[DIFF_OPTIONS[self.diff_cursor]]
+        self.reset(to_menu=False, lives=lives)
 
     def fire(self):
         if self.state != "playing":
@@ -788,18 +797,31 @@ class Game:
         font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 18)
         small = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 14)
 
-        ui_lines = [
-            f"SCORE {self.score:07d}",
-            f"LIVES {self.player.lives}",
-            f"SPAWNED {self.total_spawned}",
-            f"ENEMY SPD {self.enemy_speed:.2f}",
-        ]
+        x, y = 14, 10
 
-        x = 14
-        y = 10
-        for line in ui_lines:
-            shadow = font.render(line, False, (0, 0, 0))
-            text = font.render(line, False, (120, 255, 160))
+        # Score line
+        for text_str, color in [
+            (f"SCORE {self.score:07d}", (120, 255, 160)),
+        ]:
+            shadow = font.render(text_str, False, (0, 0, 0))
+            text = font.render(text_str, False, color)
+            surf.blit(shadow, (x + 2, y + 2))
+            surf.blit(text, (x, y))
+            y += 23
+
+        # Ship icons (one per remaining life)
+        icon = pygame.transform.scale(ASSETS["player"], (30, 20))
+        for i in range(self.player.lives):
+            surf.blit(icon, (x + i * 35, y))
+        y += 26
+
+        # Remaining HUD lines
+        for text_str, color in [
+            (f"SPAWNED {self.total_spawned}", (120, 255, 160)),
+            (f"ENEMY SPD {self.enemy_speed:.2f}", (120, 255, 160)),
+        ]:
+            shadow = font.render(text_str, False, (0, 0, 0))
+            text = font.render(text_str, False, color)
             surf.blit(shadow, (x + 2, y + 2))
             surf.blit(text, (x, y))
             y += 23
@@ -836,19 +858,121 @@ class Game:
             title = title_font.render(GAME_NAME, False, (120, 255, 180))
             surf.blit(title, title.get_rect(center=(WIDTH // 2, logo_y + 80)))
 
-        subtitle = font.render("16-BIT SIDE-SCROLLING SHOOTER", False, (120, 190, 255))
         start = font.render("PRESS ENTER TO START", False, (255, 230, 120))
+        options_hint = small.render("O  OPTIONS", False, (180, 210, 255))
         controls = small.render("WASD / ARROWS MOVE   SPACE FIRE   ESC QUIT", False, (170, 170, 190))
 
-        # Blink the start prompt
         show_start = (pygame.time.get_ticks() // 500) % 2 == 0
 
-        # surf.blit(subtitle, subtitle.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 35)))
-
         if show_start:
-            surf.blit(start, start.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 88)))
+            surf.blit(start, start.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 80)))
 
-        surf.blit(controls, controls.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 138)))
+        surf.blit(options_hint, options_hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 116)))
+        surf.blit(controls, controls.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 146)))
+
+    def draw_difficulty(self, surf):
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 150))
+        surf.blit(overlay, (0, 0))
+
+        title_font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 38, bold=True)
+        font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 26)
+        small = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 18)
+
+        title = title_font.render("SELECT DIFFICULTY", False, (120, 210, 255))
+        surf.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 100)))
+
+        labels = ["EASY", "NORMAL", "HARD"]
+        ships  = [5, 3, 1]
+        colors_sel   = [(80, 255, 120), (255, 230, 80), (255, 80, 80)]
+        colors_unsel = [(60, 120, 70),  (120, 100, 40), (120, 40, 40)]
+
+        col_gap = 210
+        base_x = WIDTH // 2 - col_gap
+        y_label = HEIGHT // 2 - 10
+        y_ships = HEIGHT // 2 + 38
+
+        box_pad_x, box_pad_y = 22, 16
+        icon = pygame.transform.scale(ASSETS["player"], (24, 16))
+
+        for i, (label, n_ships) in enumerate(zip(labels, ships)):
+            cx = base_x + i * col_gap
+            selected = (i == self.diff_cursor)
+            color = colors_sel[i] if selected else colors_unsel[i]
+
+            txt = font.render(label, False, color)
+            surf.blit(txt, txt.get_rect(center=(cx, y_label)))
+
+            # mini ship icons
+            total_w = n_ships * 28 - 4  # last gap removed
+            ix = cx - total_w // 2
+            for _ in range(n_ships):
+                surf.blit(icon, (ix, y_ships))
+                ix += 28
+
+            if selected:
+                # box encompassing label + ship icons
+                content_top    = y_label - txt.get_height() // 2 - box_pad_y
+                content_bottom = y_ships + icon.get_height() + box_pad_y
+                content_left   = cx - max(txt.get_width(), total_w) // 2 - box_pad_x
+                content_right  = cx + max(txt.get_width(), total_w) // 2 + box_pad_x
+                box_rect = pygame.Rect(
+                    content_left, content_top,
+                    content_right - content_left,
+                    content_bottom - content_top,
+                )
+                pygame.draw.rect(surf, color, box_rect, 2)
+
+        hint = small.render("LEFT / RIGHT  SELECT     ENTER  CONFIRM     ESC  BACK", False, (150, 150, 180))
+        surf.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 110)))
+
+    def draw_options(self, surf):
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        surf.blit(overlay, (0, 0))
+
+        title_font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 38, bold=True)
+        font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 20)
+        small = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 16)
+
+        title = title_font.render("OPTIONS", False, (120, 210, 255))
+        surf.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 110)))
+
+        sliders = [
+            ("MUSIC VOLUME", VOL["music"]),
+            ("SFX VOLUME",   VOL["sfx"]),
+        ]
+        bar_w, bar_h = 300, 16
+        row_h = 72   # vertical space per slider (label + gap + bar)
+
+        for i, (label, vol) in enumerate(sliders):
+            # centre of this slider block
+            block_cy = HEIGHT // 2 - 20 + i * row_h
+            label_y  = block_cy - 14   # top of label text
+            bar_y    = block_cy + 12   # top of bar
+
+            selected = (i == self.options_cursor)
+            col = (255, 230, 80) if selected else (150, 150, 180)
+
+            # label centered above the bar
+            lbl = font.render(label, False, col)
+            surf.blit(lbl, lbl.get_rect(centerx=WIDTH // 2, y=label_y))
+
+            # bar centered on screen
+            bar_x = WIDTH // 2 - bar_w // 2
+            pygame.draw.rect(surf, (40, 40, 60), (bar_x, bar_y, bar_w, bar_h))
+            fill = int(bar_w * vol)
+            fill_col = (80, 220, 120) if selected else (60, 130, 80)
+            if fill > 0:
+                pygame.draw.rect(surf, fill_col, (bar_x, bar_y, fill, bar_h))
+            pygame.draw.rect(surf, col, (bar_x, bar_y, bar_w, bar_h), 2)
+
+            # percentage to the right of bar
+            pct = small.render(f"{int(vol * 100)}%", False, col)
+            surf.blit(pct, (bar_x + bar_w + 10, bar_y + bar_h // 2 - pct.get_height() // 2))
+
+        hint = small.render("UP / DOWN  SELECT SLIDER     LEFT / RIGHT  ADJUST     ESC  BACK", False, (130, 130, 160))
+        surf.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 110)))
 
     def draw_game_over(self, surf):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -898,6 +1022,12 @@ class Game:
         elif self.state == "menu":
             self.draw_menu(world)
 
+        elif self.state == "difficulty":
+            self.draw_difficulty(world)
+
+        elif self.state == "options":
+            self.draw_options(world)
+
         elif self.state == "game_over":
             for explosion in self.explosions:
                 explosion.draw(world)
@@ -923,21 +1053,56 @@ def main():
                 running = False
 
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    running = False
+                if game.state == "menu":
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        game.state = "difficulty"
+                    elif event.key == pygame.K_o:
+                        game.state = "options"
 
-                elif game.state == "menu":
-                    if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                elif game.state == "difficulty":
+                    if event.key == pygame.K_ESCAPE:
+                        game.state = "menu"
+                    elif event.key in (pygame.K_LEFT, pygame.K_a):
+                        game.diff_cursor = (game.diff_cursor - 1) % len(DIFF_OPTIONS)
+                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                        game.diff_cursor = (game.diff_cursor + 1) % len(DIFF_OPTIONS)
+                    elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         game.start_game()
 
+                elif game.state == "options":
+                    if event.key == pygame.K_ESCAPE:
+                        game.state = "menu"
+                    elif event.key in (pygame.K_UP, pygame.K_w):
+                        game.options_cursor = (game.options_cursor - 1) % 2
+                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        game.options_cursor = (game.options_cursor + 1) % 2
+                    elif event.key in (pygame.K_LEFT, pygame.K_a):
+                        if game.options_cursor == 0:
+                            VOL["music"] = max(0.0, round(VOL["music"] - 0.05, 2))
+                            pygame.mixer.music.set_volume(VOL["music"])
+                        else:
+                            VOL["sfx"] = max(0.0, round(VOL["sfx"] - 0.05, 2))
+                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                        if game.options_cursor == 0:
+                            VOL["music"] = min(1.0, round(VOL["music"] + 0.05, 2))
+                            pygame.mixer.music.set_volume(VOL["music"])
+                        else:
+                            VOL["sfx"] = min(1.0, round(VOL["sfx"] + 0.05, 2))
+
                 elif game.state == "game_over":
-                    if event.key == pygame.K_r:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif event.key == pygame.K_r:
                         game.start_game()
                     elif event.key == pygame.K_m:
                         game.reset(to_menu=True)
 
                 elif game.state == "playing":
-                    if event.key == pygame.K_SPACE:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif event.key == pygame.K_SPACE:
                         game.fire()
 
         game.update(dt)
