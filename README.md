@@ -1,38 +1,48 @@
 # Aimer 8
 
-**Aimer 8** is a simple 16-bit style side-scrolling space shooter built with **Python** and **Pygame**.
+**Aimer 8** is a 16-bit style side-scrolling space shooter built with **Python** and **Pygame**.
 
-Pilot a small pixel-art spaceship, dodge incoming enemies, fire retro laser shots, survive increasingly difficult waves, and fight larger enemies every 30 spawns.
+Pilot a pixel-art spaceship, blast through increasingly dangerous enemy waves, dodge formation attacks, and survive as long as you can.
+
+## Screenshots
+
+### Main Menu
+![Main Menu](screenshot_main.png)
+
+### Difficulty Selection
+![Difficulty Selection](screenshot_difficulty.png)
+
+### Options
+![Options](screenshot_options.png)
+
+### Gameplay
+![Gameplay](screenshot_game.png)
 
 ## Features
 
 - 16-bit / Super Nintendo inspired pixel-art visual style
 - Side-scrolling shooter gameplay
+- **Difficulty selection**: Easy (5 ships), Normal (3 ships), Hard (1 ship)
+- **Options menu**: adjustable music and SFX volume sliders
 - Player movement with **WASD** or **Arrow Keys**
 - Laser shooting with **Spacebar**
 - Procedurally generated retro laser and explosion sound effects
 - Background music support:
-  - `audio/main.mp3` for the main menu and game-over screen
-  - `audio/level.mp3` for gameplay
+  - `audio/main.mp3` — main menu and game-over screen
+  - `audio/level.mp3` — during gameplay
 - Starfield background with parallax scrolling
-- Distant planets, nebulae, and space station background elements
+- Distant planets, nebulae, and space station background elements (seeded, deterministic order each run)
 - Enemy progression:
-  - Normal enemies spawn from the right side of the screen
-  - Every 30 spawned enemies, a larger enemy appears
-  - Larger enemies require 5 hits to destroy
-  - Every 90 spawned enemies, enemy speed increases
-- Score, lives, enemies spawned, and enemy speed UI
-- Player blink effect after damage
-- Screen shake on player collision
-- Game-over screen with restart support
-- Animated title logo on the main menu
+  - Normal enemies spawn from the right
+  - Every **15 spawns** — a sinusoidal **enemy train** formation, ship count grows with speed
+  - Every **30 spawns** — a large armored enemy (5 hits to destroy)
+  - Every **90 spawns** — enemy speed increases
+- Ship-icon HUD (remaining lives shown as ship sprites)
+- Player blink and invulnerability after taking damage
+- Screen shake on collision
+- Game-over screen with restart or return to menu
 
 ## Screens and Assets
-
-<img width="957" height="527" alt="screenshot_main" src="https://github.com/user-attachments/assets/105ce862-9fc5-4370-b81b-7f82888404ff" />
-
-<img width="951" height="531" alt="screenshot_game" src="https://github.com/user-attachments/assets/acec21dd-593a-4ba2-b1bd-a34801b3b010" />
-
 
 The game expects the following project structure:
 
@@ -69,7 +79,7 @@ Place these files in the `audio/` folder:
 - `main.mp3` — loops during the main menu and game-over screen.
 - `level.mp3` — loops during gameplay.
 
-Sound effects for lasers and explosions are generated in code, so no external sound-effect files are required.
+Sound effects for lasers and explosions are generated in code; no external SFX files are required.
 
 ## Installation
 
@@ -81,15 +91,11 @@ pip install pygame pillow
 
 ## Running the Game
 
-From the project folder, run:
-
 ```bash
 python main.py
 ```
 
 ## Windows Executable
-
-To rebuild it from source:
 
 ```bash
 # Generate the icon (requires Pillow)
@@ -108,23 +114,36 @@ The compiled binary will appear in `dist/Aimer8.exe`.
 |---|---|
 | Move | WASD or Arrow Keys |
 | Fire | Spacebar |
-| Start Game | Enter |
-| Restart After Game Over | R |
-| Quit | Escape |
+| Navigate menus | Arrow Keys / WASD |
+| Confirm | Enter |
+| Back / Quit | Escape |
+| Restart after game over | R |
+| Return to menu after game over | M |
+| Open options (main menu) | O |
 
 ## Gameplay Rules
 
 - Destroy enemies to increase your score.
-- Normal enemies are destroyed with 1 hit.
-- Larger enemies appear every 30 enemies spawned.
-- Larger enemies take 5 hits to destroy and award more points.
-- Enemy speed increases every 90 enemies spawned.
-- Colliding with an enemy removes one life.
-- The game ends when lives reach zero.
+- Normal enemies are destroyed with **1 hit** (100 pts).
+- Every **15 enemies**, a sinusoidal **train formation** enters — ships travel in a wave pattern, count equals the current speed tier (150 pts each).
+- Every **30 enemies**, a large enemy appears — takes **5 hits** and awards more points.
+- Every **90 enemies**, all enemy speeds increase.
+- Colliding with an enemy removes one ship (life).
+- The game ends when all ships are lost.
+
+## Difficulty
+
+| Difficulty | Starting ships |
+|---|---|
+| Easy | 5 |
+| Normal | 3 |
+| Hard | 1 |
+
+Select difficulty from the menu that appears after pressing **Enter** on the title screen.
 
 ## Configuration
 
-Most gameplay values can be edited near the top of `main.py`, including:
+Most gameplay values can be edited near the top of `main.py`:
 
 ```python
 WIDTH, HEIGHT = 960, 540
@@ -134,15 +153,17 @@ PLAYER_SPEED = 5.0
 BULLET_SPEED = 10.0
 FIRE_COOLDOWN = 170  # ms between shots
 
-START_LIVES = 3
 BASE_ENEMY_SPEED = 3.0
-SPEED_INCREASE_EVERY = 90  # enemies spawned per speed step
-BIG_ENEMY_EVERY = 30       # spawn a large enemy every N spawns
+SPEED_INCREASE_EVERY = 90
+BIG_ENEMY_EVERY = 30
+TRAIN_EVERY = 15
+
+VOL = {"music": 0.45, "sfx": 0.5}  # default volumes (also adjustable in-game)
 ```
 
 ## Notes About Generated Assets
 
-The sprite sheet and logo are designed for a retro 16-bit style. The game uses chroma-key removal for green `#00FF00`, so avoid using that exact green color inside visible sprite artwork unless it is meant to become transparent.
+The sprite sheet and logo are designed for a retro 16-bit style. The game uses chroma-key removal for green `#00FF00`, so avoid using that exact color inside visible sprite artwork unless it is meant to become transparent.
 
 ## AI-Generated Code and Asset Disclaimer
 
