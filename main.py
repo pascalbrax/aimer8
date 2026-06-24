@@ -1,4 +1,5 @@
 import os
+import sys
 import math
 import random
 import array
@@ -9,17 +10,22 @@ import pygame
 # Assets: gfx/gsprites.png
 # ------------------------------------------------------------
 
+def _asset(path):
+    """Resolve asset paths whether running from source or a PyInstaller bundle."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, path)
+
 WIDTH, HEIGHT = 960, 540
 FPS = 60
 
-TITLE_LOGO = os.path.join("gfx", "title.png")
+TITLE_LOGO = _asset(os.path.join("gfx", "title.png"))
 GAME_NAME = "Aimer 8"
 
-ASSET_PATH = os.path.join("gfx", "gsprites.png")
+ASSET_PATH = _asset(os.path.join("gfx", "gsprites.png"))
 GREEN_KEY = (0, 255, 0)
 
-MAIN_MUSIC = os.path.join("audio", "main.mp3")
-LEVEL_MUSIC = os.path.join("audio", "level.mp3")
+MAIN_MUSIC = _asset(os.path.join("audio", "main.mp3"))
+LEVEL_MUSIC = _asset(os.path.join("audio", "level.mp3"))
 
 MUSIC_VOLUME = 0.45
 _current_music = None
@@ -40,7 +46,13 @@ pygame.mixer.pre_init(44100, -16, 1, 512)
 pygame.init()
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-# pygame.display.set_caption("16-Bit Star Blaster")
+pygame.display.set_caption(GAME_NAME)
+
+_icon_path = _asset(os.path.join("gfx", "icon.png"))
+if os.path.exists(_icon_path):
+    _icon_surf = pygame.image.load(_icon_path).convert_alpha()
+    pygame.display.set_icon(_icon_surf)
+
 clock = pygame.time.Clock()
 
 
