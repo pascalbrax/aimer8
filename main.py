@@ -41,6 +41,12 @@ BIG_ENEMY_EVERY = 30
 
 NORMAL_SCORE = 100
 BIG_SCORE = 700
+TRAIN_SCORE = 150
+
+TRAIN_EVERY = 15       # spawn a train every N regular enemies
+TRAIN_SPACING = 52     # pixels between ships in the chain
+TRAIN_AMPLITUDE = 85   # vertical sine amplitude in pixels
+TRAIN_WAVE_FREQ = 0.020  # horizontal frequency of the sine wave
 
 pygame.mixer.pre_init(44100, -16, 1, 512)
 pygame.init()
@@ -375,18 +381,21 @@ class Star:
         )
 
 
+BG_RNG = random.Random(8)  # fixed seed: distant objects appear in same order every run
+
+
 class DistantObject:
     def __init__(self, image, speed):
         self.image = image
         self.speed = speed
-        self.x = random.randrange(WIDTH, WIDTH + 1200)
-        self.y = random.randrange(40, HEIGHT - 180)
+        self.x = BG_RNG.randrange(WIDTH + 1000, WIDTH + 9000)
+        self.y = BG_RNG.randrange(40, HEIGHT - 180)
 
     def update(self):
         self.x -= self.speed
         if self.x < -self.image.get_width() - 200:
-            self.x = random.randrange(WIDTH + 300, WIDTH + 1600)
-            self.y = random.randrange(30, HEIGHT - 180)
+            self.x = BG_RNG.randrange(WIDTH + 4000, WIDTH + 9000)
+            self.y = BG_RNG.randrange(30, HEIGHT - 180)
 
     def draw(self, surf, ox=0, oy=0):
         surf.blit(self.image, (int(self.x + ox), int(self.y + oy)))
@@ -514,6 +523,56 @@ class Enemy:
             surf.blit(flash, self.rect)
 
 
+class TrainEnemy:
+    """A ship that travels in a sinusoidal wave, chained in a formation."""
+
+    def __init__(self, index, speed, start_x, center_y):
+        self.image = random.choice(ASSETS["enemies"])
+        self.speed = speed
+        # Each ship is staggered behind the lead by index * spacing
+        self.x = float(start_x - index * TRAIN_SPACING)
+        self.center_y = center_y
+        self.dead = False
+        self.hp = 1
+        self.score = TRAIN_SCORE
+        self.big = False
+        self.flash = 0
+        self.rect = self.image.get_rect()
+        self._sync_rect()
+
+    def _wave_y(self):
+        return self.center_y + TRAIN_AMPLITUDE * math.sin(self.x * TRAIN_WAVE_FREQ)
+
+    def _sync_rect(self):
+        self.rect.x = int(self.x)
+        self.rect.centery = max(
+            self.rect.height // 2 + 10,
+            min(HEIGHT - self.rect.height // 2 - 10, int(self._wave_y())),
+        )
+
+    def update(self, dt):
+        self.x -= self.speed
+        self.flash = max(0, self.flash - dt)
+        self._sync_rect()
+        if self.rect.right < -80:
+            self.dead = True
+
+    def damage(self):
+        self.hp -= 1
+        self.flash = 80
+        if self.hp <= 0:
+            self.dead = True
+            return True
+        return False
+
+    def draw(self, surf):
+        surf.blit(self.image, self.rect)
+        if self.flash > 0:
+            flash_surf = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+            flash_surf.fill((255, 255, 255, 90))
+            surf.blit(flash_surf, self.rect)
+
+
 class Explosion:
     def __init__(self, center):
         self.frames = ASSETS["explosions"]
@@ -604,7 +663,25 @@ class Game:
             self.enemy_speed += 1.50
             self.spawn_delay = max(430, self.spawn_delay - 45)
 
-        self.enemies.append(Enemy(self.enemy_speed, self.total_spawned))
+        is_big = self.total_spawned % BIG_ENEMY_EVERY == 0
+        is_train = (not is_big) and (self.total_spawned % TRAIN_EVERY == 0)
+
+        if is_train:
+            self._spawn_train()
+        else:
+            self.enemies.append(Enemy(self.enemy_speed, self.total_spawned))
+
+    def _spawn_train(self):
+        count = max(2, int(self.enemy_speed))
+        start_x = WIDTH + 60
+        center_y = random.randrange(
+            int(HEIGHT * 0.25), int(HEIGHT * 0.75)
+        )
+        train_speed = self.enemy_speed * 0.9
+        for i in range(count):
+            self.enemies.append(
+                TrainEnemy(i, train_speed, start_x, center_y)
+            )
 
     def update(self, dt):
         # Background keeps moving on menu and game over
@@ -785,11 +862,13 @@ class Game:
         score = font.render(f"FINAL SCORE: {self.score}", False, (160, 255, 180))
         spawned = font.render(f"ENEMIES SPAWNED: {self.total_spawned}", False, (160, 220, 255))
         restart = font.render("PRESS R TO RESTART", False, (255, 230, 120))
+        menu = font.render("PRESS M FOR MENU", False, (180, 210, 255))
 
         surf.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 80)))
         surf.blit(score, score.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 20)))
         surf.blit(spawned, spawned.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 18)))
-        surf.blit(restart, restart.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 80)))
+        surf.blit(restart, restart.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 70)))
+        surf.blit(menu, menu.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 106)))
 
     def draw(self, target):
         ox = oy = 0
@@ -854,6 +933,8 @@ def main():
                 elif game.state == "game_over":
                     if event.key == pygame.K_r:
                         game.start_game()
+                    elif event.key == pygame.K_m:
+                        game.reset(to_menu=True)
 
                 elif game.state == "playing":
                     if event.key == pygame.K_SPACE:
