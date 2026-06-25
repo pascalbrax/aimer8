@@ -40,13 +40,12 @@ START_LIVES = 3  # kept as fallback default
 
 BASE_ENEMY_SPEED = 3.0
 SPEED_INCREASE_EVERY = 90
-BIG_ENEMY_EVERY = 30
 
 NORMAL_SCORE = 100
 BIG_SCORE = 700
 TRAIN_SCORE = 150
 
-TRAIN_EVERY = 15       # spawn a train every N regular enemies
+TRAIN_EVERY = 15       # every N spawns a special wave appears (train/big alternating)
 TRAIN_SPACING = 52     # pixels between ships in the chain
 TRAIN_AMPLITUDE = 85   # vertical sine amplitude in pixels
 TRAIN_WAVE_FREQ = 0.020  # horizontal frequency of the sine wave
@@ -472,8 +471,8 @@ class Bullet:
 
 
 class Enemy:
-    def __init__(self, speed, total_spawned):
-        self.big = total_spawned % BIG_ENEMY_EVERY == 0
+    def __init__(self, speed, big=False):
+        self.big = big
 
         if self.big:
             self.image = ASSETS["big_enemy"]
@@ -619,6 +618,7 @@ class Game:
 
         self.score = 0
         self.total_spawned = 0
+        self.special_count = 0   # counts special waves; even/odd alternates train vs big
         self.enemy_speed = BASE_ENEMY_SPEED
         self.spawn_timer = 0
         self.spawn_delay = 850
@@ -673,13 +673,16 @@ class Game:
             self.enemy_speed += 1.50
             self.spawn_delay = max(430, self.spawn_delay - 45)
 
-        is_big = self.total_spawned % BIG_ENEMY_EVERY == 0
-        is_train = (not is_big) and (self.total_spawned % TRAIN_EVERY == 0)
-
-        if is_train:
-            self._spawn_train()
+        # Every TRAIN_EVERY spawns a special wave appears; trains and big
+        # enemies strictly alternate (train, big, train, big, ...).
+        if self.total_spawned % TRAIN_EVERY == 0:
+            self.special_count += 1
+            if self.special_count % 2 == 1:
+                self._spawn_train()
+            else:
+                self.enemies.append(Enemy(self.enemy_speed, big=True))
         else:
-            self.enemies.append(Enemy(self.enemy_speed, self.total_spawned))
+            self.enemies.append(Enemy(self.enemy_speed, big=False))
 
     def _spawn_train(self):
         count = max(2, int(self.enemy_speed))

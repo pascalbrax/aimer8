@@ -34,8 +34,9 @@ Pilot a pixel-art spaceship, blast through increasingly dangerous enemy waves, d
 - Distant planets, nebulae, and space station background elements (seeded, deterministic order each run)
 - Enemy progression:
   - Normal enemies spawn from the right
-  - Every **15 spawns** — a sinusoidal **enemy train** formation, ship count grows with speed
-  - Every **30 spawns** — a large armored enemy (5 hits to destroy)
+  - Every **15 spawns** — a special wave: **enemy trains** and **large armored enemies** alternate (train at 15, big at 30, train at 45, big at 60, …)
+  - Sinusoidal **enemy train** formation, ship count grows with speed
+  - **Large armored enemy** takes 5 hits to destroy
   - Every **90 spawns** — enemy speed increases
 - Ship-icon HUD (remaining lives shown as ship sprites)
 - Player blink and invulnerability after taking damage
@@ -125,8 +126,9 @@ The compiled binary will appear in `dist/Aimer8.exe`.
 
 - Destroy enemies to increase your score.
 - Normal enemies are destroyed with **1 hit** (100 pts).
-- Every **15 enemies**, a sinusoidal **train formation** enters — ships travel in a wave pattern, count equals the current speed tier (150 pts each).
-- Every **30 enemies**, a large enemy appears — takes **5 hits** and awards more points.
+- Every **15 spawns** a special wave enters, alternating between two types:
+  - **Train formation** — ships travel in a sinusoidal wave pattern, count equals the current speed tier (150 pts each).
+  - **Large enemy** — takes **5 hits** and awards more points (700 pts).
 - Every **90 enemies**, all enemy speeds increase.
 - Colliding with an enemy removes one ship (life).
 - The game ends when all ships are lost.
@@ -155,8 +157,7 @@ FIRE_COOLDOWN = 170  # ms between shots
 
 BASE_ENEMY_SPEED = 3.0
 SPEED_INCREASE_EVERY = 90
-BIG_ENEMY_EVERY = 30
-TRAIN_EVERY = 15
+TRAIN_EVERY = 15  # special wave every N spawns; trains and big enemies alternate
 
 VOL = {"music": 0.45, "sfx": 0.5}  # default volumes (also adjustable in-game)
 ```
@@ -175,9 +176,7 @@ No warranty is provided. Use this project at your own discretion.
 
 ## License
 
-No license has been selected yet.
-
-Before publishing or distributing this repository, choose a license such as MIT, Apache-2.0, GPL, or another license that fits your intended use.
+This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
 
 ## Credits
 
