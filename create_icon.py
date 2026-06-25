@@ -1,6 +1,6 @@
 """Generate gfx/icon.ico and gfx/icon.png for Aimer 8.
 
-Uses the actual player ship sprite from gfx/gsprites.png when available,
+Uses the actual player ship sprite from gfx/sprites.png when available,
 falling back to a procedurally drawn ship otherwise.
 """
 from PIL import Image, ImageDraw
@@ -12,28 +12,16 @@ STAR = (255, 255, 255, 160)
 # star positions as fractions of icon size
 STARS = [(0.13, 0.14), (0.78, 0.18), (0.85, 0.73), (0.18, 0.80)]
 
-SHEET_PATH = os.path.join("gfx", "gsprites.png")
+SHEET_PATH = os.path.join("gfx", "sprites.png")
 
-# Player crop in the 1254×1254 base coordinate space (same as main.py)
-PLAYER_RECT = (10, 45, 210, 180)   # x, y, w, h
+# Player ship (frame 1) location on the 1254×1254 sprites.png sheet, in
+# absolute pixels (must match PLAYER_FRAMES_SRC[0] in main.py).
+PLAYER_RECT = (28, 71, 167, 135)   # x, y, w, h
 
 
 # -----------------------------------------------------------------------
 # Sprite extraction helpers
 # -----------------------------------------------------------------------
-
-def remove_chroma_key(img: Image.Image) -> Image.Image:
-    """Turn solid-green (#00FF00-ish) pixels transparent."""
-    img = img.convert("RGBA")
-    data = img.load()
-    w, h = img.size
-    for y in range(h):
-        for x in range(w):
-            r, g, b, a = data[x, y]
-            if g > 160 and r < 90 and b < 90:
-                data[x, y] = (0, 0, 0, 0)
-    return img
-
 
 def trim_alpha(img: Image.Image) -> Image.Image:
     """Crop to the non-transparent bounding box."""
@@ -49,17 +37,9 @@ def extract_player_sprite() -> Image.Image | None:
         return None
     try:
         sheet = Image.open(SHEET_PATH).convert("RGBA")
-        sw, sh = sheet.size
-        base_w = base_h = 1254
 
         x, y, w, h = PLAYER_RECT
-        sx = int(x / base_w * sw)
-        sy = int(y / base_h * sh)
-        sw2 = max(1, int(w / base_w * sw))
-        sh2 = max(1, int(h / base_h * sh))
-
-        region = sheet.crop((sx, sy, sx + sw2, sy + sh2))
-        region = remove_chroma_key(region)
+        region = sheet.crop((x, y, x + w, y + h))
         region = trim_alpha(region)
         if region.width < 3 or region.height < 3:
             return None

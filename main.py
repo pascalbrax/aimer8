@@ -7,7 +7,7 @@ import pygame
 
 # ------------------------------------------------------------
 # 16-bit Side-Scrolling Shooter
-# Assets: gfx/gsprites.png
+# Assets: gfx/sprites.png
 # ------------------------------------------------------------
 
 def _asset(path):
@@ -21,8 +21,7 @@ FPS = 60
 TITLE_LOGO = _asset(os.path.join("gfx", "title.png"))
 GAME_NAME = "Aimer 8"
 
-ASSET_PATH = _asset(os.path.join("gfx", "gsprites.png"))
-GREEN_KEY = (0, 255, 0)
+ASSET_PATH = _asset(os.path.join("gfx", "sprites.png"))
 
 MAIN_MUSIC = _asset(os.path.join("audio", "main.mp3"))
 LEVEL_MUSIC = _asset(os.path.join("audio", "level.mp3"))
@@ -44,11 +43,17 @@ SPEED_INCREASE_EVERY = 90
 NORMAL_SCORE = 100
 BIG_SCORE = 700
 TRAIN_SCORE = 150
+BOSS_SCORE = 3000
 
 TRAIN_EVERY = 15       # every N spawns a special wave appears (train/big alternating)
 TRAIN_SPACING = 52     # pixels between ships in the chain
 TRAIN_AMPLITUDE = 85   # vertical sine amplitude in pixels
 TRAIN_WAVE_FREQ = 0.020  # horizontal frequency of the sine wave
+
+BOSS_EVERY = 60        # every N spawns a boss monster appears (takes priority over the special wave)
+BOSS_HP = 40           # bullets needed to destroy the boss
+
+PLAYER_ANIM_MS = 130   # ms between player engine-animation frames
 
 pygame.mixer.pre_init(44100, -16, 1, 512)
 pygame.init()
@@ -196,29 +201,37 @@ def pixel_scale(surface, size):
     return pygame.transform.scale(surface, size)
 
 
-def crop_from_sheet(sheet, rect, out_size):
-    base_w, base_h = 1254, 1254
-    sw, sh = sheet.get_size()
+def crop_alpha(sheet, rect, out_size):
+    """Crop a sprite from an alpha sheet (sprites.png), trim padding, scale to out_size.
 
-    x, y, w, h = rect
-    sx = int(x / base_w * sw)
-    sy = int(y / base_h * sh)
-    ss_w = int(w / base_w * sw)
-    ss_h = int(h / base_h * sh)
-
-    sx = max(0, min(sx, sw - 1))
-    sy = max(0, min(sy, sh - 1))
-    ss_w = max(1, min(ss_w, sw - sx))
-    ss_h = max(1, min(ss_h, sh - sy))
-
-    part = sheet.subsurface((sx, sy, ss_w, ss_h)).copy()
-    part = transparent_green(part)
-    part = trim_alpha(part)
+    rect is (x, y, w, h) in absolute sheet pixels. The sheet already carries a
+    real alpha channel, so no chroma-key removal is needed.
+    """
+    part = trim_alpha(sheet.subsurface(rect).copy())
 
     if part.get_width() <= 2 or part.get_height() <= 2:
         raise ValueError("Empty sprite crop")
 
     return pixel_scale(part, out_size)
+
+
+def crop_alpha_fit(sheet, rect, box):
+    """Like crop_alpha, but preserve aspect ratio and centre the sprite on a
+    transparent surface of exactly `box` size. Used where several sprites must
+    share a consistent footprint (e.g. the player animation frames)."""
+    part = trim_alpha(sheet.subsurface(rect).copy())
+    pw, ph = part.get_size()
+    if pw <= 2 or ph <= 2:
+        raise ValueError("Empty sprite crop")
+
+    bw, bh = box
+    scale = min(bw / pw, bh / ph)
+    new_size = (max(1, int(pw * scale)), max(1, int(ph * scale)))
+    scaled = pygame.transform.scale(part, new_size)
+
+    canvas = pygame.Surface(box, pygame.SRCALPHA)
+    canvas.blit(scaled, ((bw - new_size[0]) // 2, (bh - new_size[1]) // 2))
+    return canvas
 
 
 def make_fallback_ship(size=(42, 28), main=(220, 220, 230), accent=(40, 180, 255)):
@@ -283,15 +296,42 @@ def make_fallback_explosion(size=(42, 42), frame=0):
     return surf
 
 
+# Sprite locations on gfx/sprites.png (1254x1254, real alpha), as (x, y, w, h).
+PLAYER_FRAMES_SRC = [(28, 71, 167, 135), (246, 70, 167, 135)]
+ENEMY_SRC = [
+    (458, 64, 159, 145), (635, 64, 132, 141), (790, 68, 131, 140),
+    (941, 74, 118, 128), (1077, 69, 149, 138),
+    (30, 321, 154, 131), (207, 314, 129, 147), (354, 321, 177, 138),
+]
+BIG_ENEMY_SRC = (553, 282, 279, 195)
+BOSS_SRC = (851, 234, 384, 290)
+BULLET_SRC = [(35, 627, 109, 29), (197, 624, 106, 35)]
+EXPLOSION_SRC = [
+    (358, 603, 88, 75), (489, 585, 119, 104), (643, 572, 139, 127),
+    (816, 559, 160, 146), (1009, 539, 206, 177),
+]
+PLANET_SRC = [(450, 734, 210, 209), (694, 731, 213, 215)]
+STATION_SRC = (938, 731, 267, 231)
+NEBULA_SRC = [(76, 974, 506, 236), (623, 975, 556, 236)]
+
+PLAYER_BOX = (54, 40)     # shared footprint for the two animation frames
+ENEMY_BOX = (54, 46)      # shared footprint for the enemy roster
+EXPLOSION_BOXES = [(46, 46), (56, 56), (68, 68), (80, 80), (96, 96)]
+
+
 def load_assets():
     assets = {
-        "player": make_fallback_ship(),
+        "player": [
+            make_fallback_ship(),
+            make_fallback_ship(accent=(255, 180, 40)),
+        ],
         "enemies": [
             make_fallback_enemy(color=(150, 70, 210)),
             make_fallback_enemy(color=(80, 150, 70)),
             make_fallback_enemy(color=(210, 50, 60)),
         ],
         "big_enemy": make_fallback_enemy(size=(92, 70), color=(130, 70, 190)),
+        "boss": make_fallback_enemy(size=(180, 140), color=(150, 40, 190)),
         "bullets": [
             make_fallback_bullet(color=(60, 220, 255)),
             make_fallback_bullet(color=(255, 180, 40)),
@@ -307,41 +347,21 @@ def load_assets():
         return assets
 
     try:
-        sheet = pygame.image.load(ASSET_PATH).convert()
+        sheet = pygame.image.load(ASSET_PATH).convert_alpha()
 
-        assets["player"] = crop_from_sheet(sheet, (10, 45, 210, 180), (48, 34))
+        assets["player"] = [crop_alpha_fit(sheet, r, PLAYER_BOX) for r in PLAYER_FRAMES_SRC]
+        assets["enemies"] = [crop_alpha_fit(sheet, r, ENEMY_BOX) for r in ENEMY_SRC]
+        assets["big_enemy"] = crop_alpha_fit(sheet, BIG_ENEMY_SRC, (120, 86))
+        assets["boss"] = crop_alpha_fit(sheet, BOSS_SRC, (200, 150))
 
-        assets["enemies"] = [
-            crop_from_sheet(sheet, (225, 45, 210, 190), (48, 38)),
-            crop_from_sheet(sheet, (440, 50, 210, 185), (48, 38)),
-            crop_from_sheet(sheet, (655, 45, 220, 190), (52, 42)),
-        ]
-
-        assets["big_enemy"] = crop_from_sheet(sheet, (865, 0, 370, 290), (104, 82))
-
-        assets["bullets"] = [
-            crop_from_sheet(sheet, (20, 300, 130, 110), (24, 12)),
-            crop_from_sheet(sheet, (155, 300, 130, 110), (24, 12)),
-        ]
-
+        assets["bullets"] = [crop_alpha_fit(sheet, r, (40, 14)) for r in BULLET_SRC]
         assets["explosions"] = [
-            crop_from_sheet(sheet, (290, 290, 145, 145), (42, 42)),
-            crop_from_sheet(sheet, (455, 285, 160, 160), (52, 52)),
-            crop_from_sheet(sheet, (645, 280, 190, 170), (64, 58)),
-            crop_from_sheet(sheet, (900, 280, 270, 170), (84, 58)),
+            crop_alpha_fit(sheet, r, box) for r, box in zip(EXPLOSION_SRC, EXPLOSION_BOXES)
         ]
 
-        assets["planets"] = [
-            crop_from_sheet(sheet, (380, 475, 260, 250), (96, 96)),
-            crop_from_sheet(sheet, (650, 470, 260, 250), (96, 96)),
-        ]
-
-        assets["station"] = crop_from_sheet(sheet, (905, 490, 300, 235), (112, 88))
-
-        assets["nebulae"] = [
-            crop_from_sheet(sheet, (25, 710, 590, 520), (260, 220)),
-            crop_from_sheet(sheet, (635, 710, 590, 520), (260, 220)),
-        ]
+        assets["planets"] = [crop_alpha_fit(sheet, r, (96, 96)) for r in PLANET_SRC]
+        assets["station"] = crop_alpha_fit(sheet, STATION_SRC, (120, 100))
+        assets["nebulae"] = [crop_alpha_fit(sheet, r, (300, 150)) for r in NEBULA_SRC]
 
     except Exception as exc:
         print("Sprite sheet loaded, but slicing failed. Using fallback sprites.")
@@ -410,7 +430,10 @@ class DistantObject:
 
 class Player:
     def __init__(self, lives=START_LIVES):
-        self.image = ASSETS["player"]
+        self.frames = ASSETS["player"]
+        self.frame_idx = 0
+        self.anim_timer = 0
+        self.image = self.frames[0]
         self.rect = self.image.get_rect()
         self.rect.x = 55
         self.rect.centery = HEIGHT // 2
@@ -419,6 +442,13 @@ class Player:
         self.invuln_timer = 0
 
     def update(self, dt):
+        # Cycle the engine-flicker animation frames
+        self.anim_timer += dt
+        if self.anim_timer >= PLAYER_ANIM_MS:
+            self.anim_timer -= PLAYER_ANIM_MS
+            self.frame_idx = (self.frame_idx + 1) % len(self.frames)
+            self.image = self.frames[self.frame_idx]
+
         keys = pygame.key.get_pressed()
         dx = dy = 0
 
@@ -576,6 +606,68 @@ class TrainEnemy:
             surf.blit(flash_surf, self.rect)
 
 
+class Boss:
+    """A large monster boss: glides in from the right, hovers and bobs
+    vertically, soaks up many hits, and cannot be killed by ramming it."""
+
+    is_boss = True
+
+    def __init__(self, speed):
+        self.image = ASSETS["boss"]
+        self.rect = self.image.get_rect()
+        self.rect.left = WIDTH + 20
+        self.base_y = HEIGHT // 2
+        self.rect.centery = self.base_y
+
+        self.max_hp = BOSS_HP
+        self.hp = BOSS_HP
+        self.score = BOSS_SCORE
+        self.speed = speed
+        self.big = True
+        self.dead = False
+        self.flash = 0
+        self.t = 0
+        self.target_x = WIDTH - self.rect.width - 30
+
+    def update(self, dt):
+        self.t += dt
+        # Glide in, then hold position near the right edge
+        if self.rect.left > self.target_x:
+            self.rect.x -= max(1, int(self.speed))
+        # Vertical bob, clamped on screen
+        bob = int(80 * math.sin(self.t * 0.0013))
+        self.rect.centery = max(
+            self.rect.height // 2,
+            min(HEIGHT - self.rect.height // 2, self.base_y + bob),
+        )
+        self.flash = max(0, self.flash - dt)
+
+    def damage(self):
+        self.hp -= 1
+        self.flash = 80
+        if self.hp <= 0:
+            self.dead = True
+            return True
+        return False
+
+    def draw(self, surf):
+        surf.blit(self.image, self.rect)
+
+        # Wide health bar above the boss
+        bar_w = self.rect.width
+        bar_h = 7
+        x = self.rect.x
+        y = self.rect.y - 12
+        pygame.draw.rect(surf, (50, 20, 30), (x, y, bar_w, bar_h))
+        fill = int(bar_w * (self.hp / self.max_hp))
+        pygame.draw.rect(surf, (255, 90, 120), (x, y, fill, bar_h))
+
+        if self.flash > 0:
+            flash = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+            flash.fill((255, 255, 255, 90))
+            surf.blit(flash, self.rect)
+
+
 class Explosion:
     def __init__(self, center):
         self.frames = ASSETS["explosions"]
@@ -619,6 +711,7 @@ class Game:
         self.score = 0
         self.total_spawned = 0
         self.special_count = 0   # counts special waves; even/odd alternates train vs big
+        self.boss_active = False  # True while a boss is on screen
         self.enemy_speed = BASE_ENEMY_SPEED
         self.spawn_timer = 0
         self.spawn_delay = 850
@@ -673,9 +766,14 @@ class Game:
             self.enemy_speed += 1.50
             self.spawn_delay = max(430, self.spawn_delay - 45)
 
+        # A boss takes priority over the regular special wave on its frames,
+        # and only one boss may be on screen at a time.
+        if self.total_spawned % BOSS_EVERY == 0 and not self.boss_active:
+            self.boss_active = True
+            self.enemies.append(Boss(self.enemy_speed))
         # Every TRAIN_EVERY spawns a special wave appears; trains and big
         # enemies strictly alternate (train, big, train, big, ...).
-        if self.total_spawned % TRAIN_EVERY == 0:
+        elif self.total_spawned % TRAIN_EVERY == 0:
             self.special_count += 1
             if self.special_count % 2 == 1:
                 self._spawn_train()
@@ -755,7 +853,11 @@ class Game:
 
                     if destroyed:
                         self.score += enemy.score
-                        self.explosions.append(Explosion(enemy.rect.center))
+                        if getattr(enemy, "is_boss", False):
+                            self.boss_active = False
+                            self._boss_death_fx(enemy)
+                        else:
+                            self.explosions.append(Explosion(enemy.rect.center))
                         play(BOOM_SOUND)
                     else:
                         self.explosions.append(Explosion(bullet.rect.center))
@@ -769,7 +871,9 @@ class Game:
                     continue
 
                 if self.player.rect.colliderect(enemy.rect):
-                    enemy.dead = True
+                    # Ramming the boss hurts the player but does not kill it.
+                    if not getattr(enemy, "is_boss", False):
+                        enemy.dead = True
                     self.explosions.append(Explosion(enemy.rect.center))
                     self.player.hit()
                     self.screen_shake = 420
@@ -781,6 +885,16 @@ class Game:
                         self.screen_shake = 0
                         set_music("main")
                     break
+
+    def _boss_death_fx(self, boss):
+        """A burst of explosions and a strong shake when the boss goes down."""
+        cx, cy = boss.rect.center
+        self.explosions.append(Explosion((cx, cy)))
+        for _ in range(8):
+            ox = random.randint(-boss.rect.width // 2, boss.rect.width // 2)
+            oy = random.randint(-boss.rect.height // 2, boss.rect.height // 2)
+            self.explosions.append(Explosion((cx + ox, cy + oy)))
+        self.screen_shake = 600
 
     def draw_background(self, surf, ox=0, oy=0):
         surf.fill((2, 4, 18))
@@ -814,7 +928,7 @@ class Game:
             y += 23
 
         # Ship icons (one per remaining life)
-        icon = pygame.transform.scale(ASSETS["player"], (30, 20))
+        icon = pygame.transform.scale(ASSETS["player"][0], (30, 20))
         for i in range(self.player.lives):
             surf.blit(icon, (x + i * 35, y))
         y += 26
@@ -864,7 +978,7 @@ class Game:
 
         menu_items = ["START GAME", "OPTIONS"]
         item_gap = 48
-        ship_icon = pygame.transform.scale(ASSETS["player"], (32, 22))
+        ship_icon = pygame.transform.scale(ASSETS["player"][0], (32, 22))
         icon_gap = 12  # space between ship icon and text
 
         # Pre-render labels to measure widths
@@ -917,7 +1031,7 @@ class Game:
         y_ships = HEIGHT // 2 + 38
 
         box_pad_x, box_pad_y = 22, 16
-        icon = pygame.transform.scale(ASSETS["player"], (24, 16))
+        icon = pygame.transform.scale(ASSETS["player"][0], (24, 16))
 
         for i, (label, n_ships) in enumerate(zip(labels, ships)):
             cx = base_x + i * col_gap
