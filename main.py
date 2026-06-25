@@ -606,6 +606,7 @@ class Game:
         # Persistent across resets
         self.diff_cursor = 1       # index into DIFF_OPTIONS; 1 = "normal"
         self.options_cursor = 0    # 0 = music slider, 1 = sfx slider
+        self.menu_cursor = 0       # 0 = Start Game, 1 = Options
         self.reset(to_menu=True)
 
     def reset(self, to_menu=False, lives=None):
@@ -858,17 +859,37 @@ class Game:
             title = title_font.render(GAME_NAME, False, (120, 255, 180))
             surf.blit(title, title.get_rect(center=(WIDTH // 2, logo_y + 80)))
 
-        start = font.render("PRESS ENTER TO START", False, (255, 230, 120))
-        options_hint = small.render("O  OPTIONS", False, (180, 210, 255))
-        controls = small.render("WASD / ARROWS MOVE   SPACE FIRE   ESC QUIT", False, (170, 170, 190))
+        menu_items = ["START GAME", "OPTIONS"]
+        item_gap = 48
+        ship_icon = pygame.transform.scale(ASSETS["player"], (32, 22))
+        icon_gap = 12  # space between ship icon and text
 
-        show_start = (pygame.time.get_ticks() // 500) % 2 == 0
+        # Pre-render labels to measure widths
+        rendered = [font.render(label, False, (255, 255, 255)) for label in menu_items]
+        max_txt_w = max(r.get_width() for r in rendered)
 
-        if show_start:
-            surf.blit(start, start.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 80)))
+        # Total block width = ship icon + gap + widest text; center the block
+        block_w = ship_icon.get_width() + icon_gap + max_txt_w
+        block_left = WIDTH // 2 - block_w // 2
+        text_left  = block_left + ship_icon.get_width() + icon_gap
 
-        surf.blit(options_hint, options_hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 116)))
-        surf.blit(controls, controls.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 146)))
+        # Place menu below the logo with a fixed gap, never overlapping it
+        logo_h = self.title_logo.get_height() if self.title_logo else 80
+        item_y_start = target_y + logo_h + 36
+
+        for i, (label, base_surf) in enumerate(zip(menu_items, rendered)):
+            item_y = item_y_start + i * item_gap
+            selected = (i == self.menu_cursor)
+            color = (255, 230, 80) if selected else (130, 150, 180)
+            txt = font.render(label, False, color)
+            surf.blit(txt, (text_left, item_y - txt.get_height() // 2))
+
+            if selected:
+                sy = item_y - ship_icon.get_height() // 2
+                surf.blit(ship_icon, (block_left, sy))
+
+        controls = small.render("UP / DOWN  SELECT     ENTER  CONFIRM     ESC  QUIT", False, (120, 130, 160))
+        surf.blit(controls, controls.get_rect(center=(WIDTH // 2, HEIGHT - 28)))
 
     def draw_difficulty(self, surf):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -1056,10 +1077,15 @@ def main():
                 if game.state == "menu":
                     if event.key == pygame.K_ESCAPE:
                         running = False
+                    elif event.key in (pygame.K_UP, pygame.K_w):
+                        game.menu_cursor = (game.menu_cursor - 1) % 2
+                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        game.menu_cursor = (game.menu_cursor + 1) % 2
                     elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                        game.state = "difficulty"
-                    elif event.key == pygame.K_o:
-                        game.state = "options"
+                        if game.menu_cursor == 0:
+                            game.state = "difficulty"
+                        else:
+                            game.state = "options"
 
                 elif game.state == "difficulty":
                     if event.key == pygame.K_ESCAPE:
@@ -1101,7 +1127,7 @@ def main():
 
                 elif game.state == "playing":
                     if event.key == pygame.K_ESCAPE:
-                        running = False
+                        game.reset(to_menu=True)
                     elif event.key == pygame.K_SPACE:
                         game.fire()
 
