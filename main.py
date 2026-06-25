@@ -53,6 +53,15 @@ TRAIN_WAVE_FREQ = 0.020  # horizontal frequency of the sine wave
 BOSS_EVERY = 60        # every N spawns a boss monster appears (takes priority over the special wave)
 BOSS_HP = 40           # bullets needed to destroy the boss
 
+# Boss attack: a fan ("radius wave") of bullets fired leftward. The angles come
+# from an RNG seeded with BOSS_SEED, so the pattern is identical on every run
+# and the player can learn it.
+BOSS_FIRE_MS = 950         # ms between boss volleys
+BOSS_VOLLEY = 9            # bullets per volley
+BOSS_SPREAD = 72           # half-arc in degrees around straight-left (180 deg)
+BOSS_BULLET_SPEED = 4.4
+BOSS_SEED = 20250625       # fixed seed so the attack pattern never changes
+
 PLAYER_ANIM_MS = 130   # ms between player engine-animation frames
 
 pygame.mixer.pre_init(44100, -16, 1, 512)
@@ -373,6 +382,18 @@ def load_assets():
 ASSETS = load_assets()
 
 
+def make_boss_bullet():
+    """A small round energy orb used for the boss's bullets (direction-agnostic)."""
+    s = pygame.Surface((14, 14), pygame.SRCALPHA)
+    pygame.draw.circle(s, (255, 70, 40), (7, 7), 7)
+    pygame.draw.circle(s, (255, 170, 60), (7, 7), 4)
+    pygame.draw.circle(s, (255, 255, 210), (7, 7), 2)
+    return s
+
+
+BOSS_BULLET_IMG = make_boss_bullet()
+
+
 # ------------------------------------------------------------
 # Background
 # ------------------------------------------------------------
@@ -494,6 +515,30 @@ class Bullet:
     def update(self):
         self.rect.x += int(BULLET_SPEED)
         if self.rect.left > WIDTH:
+            self.dead = True
+
+    def draw(self, surf):
+        surf.blit(self.image, self.rect)
+
+
+class EnemyBullet:
+    """A boss projectile travelling along an arbitrary (vx, vy) vector."""
+
+    def __init__(self, x, y, vx, vy):
+        self.image = BOSS_BULLET_IMG
+        self.vx = vx
+        self.vy = vy
+        self.fx = float(x)
+        self.fy = float(y)
+        self.rect = self.image.get_rect(center=(x, y))
+        self.dead = False
+
+    def update(self):
+        self.fx += self.vx
+        self.fy += self.vy
+        self.rect.center = (int(self.fx), int(self.fy))
+        if (self.rect.right < -20 or self.rect.left > WIDTH + 20
+                or self.rect.bottom < -20 or self.rect.top > HEIGHT + 20):
             self.dead = True
 
     def draw(self, surf):
@@ -629,11 +674,18 @@ class Boss:
         self.t = 0
         self.target_x = WIDTH - self.rect.width - 30
 
+        # Seeded RNG -> identical, learnable attack pattern every encounter
+        self.rng = random.Random(BOSS_SEED)
+        self.fire_timer = 0
+        self.arrived = False
+
     def update(self, dt):
         self.t += dt
         # Glide in, then hold position near the right edge
         if self.rect.left > self.target_x:
             self.rect.x -= max(1, int(self.speed))
+        else:
+            self.arrived = True
         # Vertical bob, clamped on screen
         bob = int(80 * math.sin(self.t * 0.0013))
         self.rect.centery = max(
@@ -641,6 +693,33 @@ class Boss:
             min(HEIGHT - self.rect.height // 2, self.base_y + bob),
         )
         self.flash = max(0, self.flash - dt)
+
+    def fire(self, dt):
+        """Once in position, periodically emit a leftward fan of bullets.
+        Returns a list of new EnemyBullet objects (possibly empty)."""
+        if not self.arrived:
+            return []
+
+        self.fire_timer += dt
+        if self.fire_timer < BOSS_FIRE_MS:
+            return []
+        self.fire_timer -= BOSS_FIRE_MS
+
+        bullets = []
+        # Per-volley aim wobble (deterministic) around straight-left (180 deg)
+        center = 180 + self.rng.uniform(-28, 28)
+        ox, oy = self.rect.centerx, self.rect.centery
+        for i in range(BOSS_VOLLEY):
+            frac = i / (BOSS_VOLLEY - 1) if BOSS_VOLLEY > 1 else 0.5
+            angle = center - BOSS_SPREAD + frac * 2 * BOSS_SPREAD
+            angle += self.rng.uniform(-4, 4)  # small deterministic jitter
+            rad = math.radians(angle)
+            vx = math.cos(rad) * BOSS_BULLET_SPEED
+            vy = math.sin(rad) * BOSS_BULLET_SPEED
+            bullets.append(EnemyBullet(ox, oy, vx, vy))
+
+        play(LASER_SOUND)
+        return bullets
 
     def damage(self):
         self.hp -= 1
@@ -705,6 +784,7 @@ class Game:
             lives = LIVES_BY_DIFFICULTY[DIFF_OPTIONS[self.diff_cursor]]
         self.player = Player(lives=lives)
         self.bullets = []
+        self.enemy_bullets = []
         self.enemies = []
         self.explosions = []
 
@@ -712,6 +792,7 @@ class Game:
         self.total_spawned = 0
         self.special_count = 0   # counts special waves; even/odd alternates train vs big
         self.boss_active = False  # True while a boss is on screen
+        self.boss = None          # reference to the live Boss, if any
         self.enemy_speed = BASE_ENEMY_SPEED
         self.spawn_timer = 0
         self.spawn_delay = 850
@@ -770,7 +851,8 @@ class Game:
         # and only one boss may be on screen at a time.
         if self.total_spawned % BOSS_EVERY == 0 and not self.boss_active:
             self.boss_active = True
-            self.enemies.append(Boss(self.enemy_speed))
+            self.boss = Boss(self.enemy_speed)
+            self.enemies.append(self.boss)
         # Every TRAIN_EVERY spawns a special wave appears; trains and big
         # enemies strictly alternate (train, big, train, big, ...).
         elif self.total_spawned % TRAIN_EVERY == 0:
@@ -818,8 +900,9 @@ class Game:
         if keys[pygame.K_SPACE]:
             self.fire()
 
+        # While a boss is on screen, hold back all other spawns.
         self.spawn_timer += dt
-        if self.spawn_timer >= self.spawn_delay:
+        if not self.boss_active and self.spawn_timer >= self.spawn_delay:
             self.spawn_timer = 0
             self.spawn_enemy()
 
@@ -829,12 +912,19 @@ class Game:
         for enemy in self.enemies:
             enemy.update(dt)
 
+        if self.boss and not self.boss.dead:
+            self.enemy_bullets.extend(self.boss.fire(dt))
+
+        for eb in self.enemy_bullets:
+            eb.update()
+
         for explosion in self.explosions:
             explosion.update(dt)
 
         self.handle_collisions()
 
         self.bullets = [b for b in self.bullets if not b.dead]
+        self.enemy_bullets = [b for b in self.enemy_bullets if not b.dead]
         self.enemies = [e for e in self.enemies if not e.dead]
         self.explosions = [e for e in self.explosions if not e.dead]
 
@@ -855,6 +945,8 @@ class Game:
                         self.score += enemy.score
                         if getattr(enemy, "is_boss", False):
                             self.boss_active = False
+                            self.boss = None
+                            self.player.lives += 1   # reward an extra life
                             self._boss_death_fx(enemy)
                         else:
                             self.explosions.append(Explosion(enemy.rect.center))
@@ -874,17 +966,30 @@ class Game:
                     # Ramming the boss hurts the player but does not kill it.
                     if not getattr(enemy, "is_boss", False):
                         enemy.dead = True
-                    self.explosions.append(Explosion(enemy.rect.center))
-                    self.player.hit()
-                    self.screen_shake = 420
-                    play(BOOM_SOUND)
-
-                    if self.player.lives <= 0:
-                        self.state = "game_over"
-                        self.game_over = True
-                        self.screen_shake = 0
-                        set_music("main")
+                    self._damage_player(enemy.rect.center)
                     break
+
+        # Boss bullets hitting the player
+        for eb in self.enemy_bullets:
+            if eb.dead:
+                continue
+            if self.player.rect.colliderect(eb.rect):
+                eb.dead = True
+                if self.player.invuln_timer <= 0:
+                    self._damage_player(self.player.rect.center)
+                break
+
+    def _damage_player(self, center):
+        """Apply one hit to the player and handle game-over."""
+        self.explosions.append(Explosion(center))
+        self.player.hit()
+        self.screen_shake = 420
+        play(BOOM_SOUND)
+        if self.player.lives <= 0:
+            self.state = "game_over"
+            self.game_over = True
+            self.screen_shake = 0
+            set_music("main")
 
     def _boss_death_fx(self, boss):
         """A burst of explosions and a strong shake when the boss goes down."""
@@ -1149,6 +1254,9 @@ class Game:
 
             for enemy in self.enemies:
                 enemy.draw(world)
+
+            for eb in self.enemy_bullets:
+                eb.draw(world)
 
             self.player.draw(world)
 

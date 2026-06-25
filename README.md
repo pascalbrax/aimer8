@@ -24,6 +24,7 @@ Pilot a pixel-art spaceship, blast through increasingly dangerous enemy waves, d
 - Side-scrolling shooter gameplay
 - **Difficulty selection**: Easy (5 ships), Normal (3 ships), Hard (1 ship)
 - **Options menu**: adjustable music and SFX volume sliders
+- Two-frame animated player ship
 - Player movement with **WASD** or **Arrow Keys**
 - Laser shooting with **Spacebar**
 - Procedurally generated retro laser and explosion sound effects
@@ -32,12 +33,19 @@ Pilot a pixel-art spaceship, blast through increasingly dangerous enemy waves, d
   - `audio/level.mp3` — during gameplay
 - Starfield background with parallax scrolling
 - Distant planets, nebulae, and space station background elements (seeded, deterministic order each run)
+- 8 different enemy ship sprites, picked at random
 - Enemy progression:
   - Normal enemies spawn from the right
   - Every **15 spawns** — a special wave: **enemy trains** and **large armored enemies** alternate (train at 15, big at 30, train at 45, big at 60, …)
   - Sinusoidal **enemy train** formation, ship count grows with speed
   - **Large armored enemy** takes 5 hits to destroy
   - Every **90 spawns** — enemy speed increases
+- **Boss monster** every **60 spawns**:
+  - All other spawns pause until the boss is destroyed
+  - Glides in, hovers and bobs, and takes 40 hits (with a health bar)
+  - Attacks with a leftward fan ("radius wave") of bullets; the pattern is **seeded, so it is identical every encounter and can be learned**
+  - Cannot be killed by ramming — contact (and its bullets) cost the player a life
+  - Destroying it awards **+1 extra life** and a big score
 - Ship-icon HUD (remaining lives shown as ship sprites)
 - Player blink and invulnerability after taking damage
 - Screen shake on collision
@@ -129,8 +137,13 @@ The compiled binary will appear in `dist/Aimer8.exe`.
 - Every **15 spawns** a special wave enters, alternating between two types:
   - **Train formation** — ships travel in a sinusoidal wave pattern, count equals the current speed tier (150 pts each).
   - **Large enemy** — takes **5 hits** and awards more points (700 pts).
+- Every **60 spawns** a **boss monster** appears (3000 pts):
+  - All other spawns pause until the boss is destroyed.
+  - It takes **40 hits** and fires a leftward fan of bullets in a fixed, learnable pattern.
+  - Ramming it or being hit by its bullets costs a life; it cannot be killed by ramming.
+  - Destroying the boss grants **+1 extra life**.
 - Every **90 enemies**, all enemy speeds increase.
-- Colliding with an enemy removes one ship (life).
+- Colliding with an enemy (or a boss bullet) removes one ship (life).
 - The game ends when all ships are lost.
 
 ## Difficulty
@@ -158,6 +171,14 @@ FIRE_COOLDOWN = 170  # ms between shots
 BASE_ENEMY_SPEED = 3.0
 SPEED_INCREASE_EVERY = 90
 TRAIN_EVERY = 15  # special wave every N spawns; trains and big enemies alternate
+
+BOSS_EVERY = 60         # spawn a boss every N spawns
+BOSS_HP = 40            # hits to destroy the boss
+BOSS_FIRE_MS = 950      # ms between boss volleys
+BOSS_VOLLEY = 9         # bullets per volley
+BOSS_SPREAD = 72        # half-arc (degrees) of the bullet fan
+BOSS_BULLET_SPEED = 4.4
+BOSS_SEED = 20250625    # fixed seed -> identical, learnable attack pattern
 
 VOL = {"music": 0.45, "sfx": 0.5}  # default volumes (also adjustable in-game)
 ```
