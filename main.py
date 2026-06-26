@@ -19,6 +19,7 @@ WIDTH, HEIGHT = 960, 540
 FPS = 60
 
 TITLE_LOGO = _asset(os.path.join("gfx", "title.png"))
+GAMEOVER_IMG = _asset(os.path.join("gfx", "gameover.png"))
 GAME_NAME = "Aimer 8"
 
 ASSET_PATH = _asset(os.path.join("gfx", "sprites.png"))
@@ -190,29 +191,27 @@ def transparent_green(surface):
 
     return surf
 
-def load_title_logo():
+def load_logo(path, max_w_frac=0.82):
     try:
-        if os.path.exists(TITLE_LOGO):
-            logo = pygame.image.load(TITLE_LOGO).convert_alpha()
+        if os.path.exists(path):
+            logo = pygame.image.load(path).convert_alpha()
             logo = transparent_green(logo)
-
-            # Scale logo to fit nicely on the main screen
-            max_w = int(WIDTH * 0.82)
+            max_w = int(WIDTH * max_w_frac)
             if logo.get_width() > max_w:
                 scale = max_w / logo.get_width()
-                new_size = (
+                logo = pygame.transform.scale(logo, (
                     int(logo.get_width() * scale),
                     int(logo.get_height() * scale),
-                )
-                logo = pygame.transform.scale(logo, new_size)
-
+                ))
             return logo
         else:
-            print(f"Missing logo file: {TITLE_LOGO}")
+            print(f"Missing logo file: {path}")
     except pygame.error as exc:
-        print(f"Could not load title logo: {exc}")
-
+        print(f"Could not load logo {path}: {exc}")
     return None
+
+def load_title_logo():
+    return load_logo(TITLE_LOGO)
 
 def trim_alpha(surface):
     rect = surface.get_bounding_rect()
@@ -808,6 +807,7 @@ class Game:
         self.special_count = 0   # counts special waves; even/odd alternates train vs big
         self.boss_active = False  # True while a boss is on screen
         self.boss = None          # reference to the live Boss, if any
+        self.game_over_cursor = 0  # 0=Restart, 1=Main Menu, 2=Exit Game
         self.enemy_speed = BASE_ENEMY_SPEED
         self.spawn_timer = 0
         self.spawn_delay = 850
@@ -818,6 +818,7 @@ class Game:
         self.state = "menu" if to_menu else "playing"
         self.game_over = False
         self.title_logo = load_title_logo()
+        self.gameover_logo = load_logo(GAMEOVER_IMG, max_w_frac=0.72)
         self.menu_timer = 0
 
         self.bg_slow = [Star(slow=True) for _ in range(70)]
@@ -1404,20 +1405,61 @@ class Game:
         overlay.fill((0, 0, 0, 170))
         surf.blit(overlay, (0, 0))
 
-        title_font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 52, bold=True)
         font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 24)
+        small = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 18)
 
-        title = title_font.render("GAME OVER", False, (255, 70, 80))
+        # Reserve space for: score (28) + gap (28) + 3 items * 44 + hint area (46)
+        menu_items = ["RESTART", "MAIN MENU", "EXIT GAME"]
+        item_gap = 44
+        reserved = 28 + 28 + len(menu_items) * item_gap + 46
+        top_margin = 16
+        max_logo_h = HEIGHT - reserved - top_margin
+
+        # Game over image or fallback text
+        if self.gameover_logo:
+            logo = self.gameover_logo
+            lw, lh = logo.get_size()
+            max_logo_w = int(WIDTH * 0.90)
+            scale = min(max_logo_w / lw, max_logo_h / lh, 1.0)
+            if scale < 1.0:
+                logo = pygame.transform.scale(logo, (int(lw * scale), int(lh * scale)))
+            logo_rect = logo.get_rect(centerx=WIDTH // 2, top=top_margin)
+            surf.blit(logo, logo_rect)
+            logo_bottom = logo_rect.bottom
+        else:
+            title_font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 52, bold=True)
+            title = title_font.render("GAME OVER", False, (255, 70, 80))
+            surf.blit(title, title.get_rect(centerx=WIDTH // 2, top=top_margin))
+            logo_bottom = top_margin + title.get_height()
+
+        # Score
+        score_y = logo_bottom + 12
         score = font.render(f"FINAL SCORE: {self.score}", False, (160, 255, 180))
-        spawned = font.render(f"ENEMIES SPAWNED: {self.total_spawned}", False, (160, 220, 255))
-        restart = font.render("PRESS R TO RESTART", False, (255, 230, 120))
-        menu = font.render("PRESS M FOR MENU", False, (180, 210, 255))
+        surf.blit(score, score.get_rect(centerx=WIDTH // 2, y=score_y))
 
-        surf.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 80)))
-        surf.blit(score, score.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 20)))
-        surf.blit(spawned, spawned.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 18)))
-        surf.blit(restart, restart.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 70)))
-        surf.blit(menu, menu.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 106)))
+        # Menu items with ship-icon selector
+        ship_icon = pygame.transform.scale(ASSETS["player"][0], (32, 22))
+        icon_gap = 12
+
+        rendered = [font.render(label, False, (255, 255, 255)) for label in menu_items]
+        max_txt_w = max(r.get_width() for r in rendered)
+        block_w = ship_icon.get_width() + icon_gap + max_txt_w
+        block_left = WIDTH // 2 - block_w // 2
+        text_left = block_left + ship_icon.get_width() + icon_gap
+
+        item_y_start = score_y + score.get_height() + 28
+
+        for i, label in enumerate(menu_items):
+            item_y = item_y_start + i * item_gap
+            selected = (i == self.game_over_cursor)
+            color = (255, 230, 80) if selected else (130, 150, 180)
+            txt = font.render(label, False, color)
+            surf.blit(txt, (text_left, item_y - txt.get_height() // 2))
+            if selected:
+                surf.blit(ship_icon, (block_left, item_y - ship_icon.get_height() // 2))
+
+        hint = small.render("UP / DOWN  SELECT     ENTER  CONFIRM", False, (120, 130, 160))
+        surf.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT - 28)))
 
     def draw(self, target):
         ox = oy = 0
@@ -1543,10 +1585,17 @@ def main():
                 elif game.state == "game_over":
                     if event.key == pygame.K_ESCAPE:
                         running = False
-                    elif event.key == pygame.K_r:
-                        game.start_game()
-                    elif event.key == pygame.K_m:
-                        game.reset(to_menu=True)
+                    elif event.key in (pygame.K_UP, pygame.K_w):
+                        game.game_over_cursor = (game.game_over_cursor - 1) % 3
+                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        game.game_over_cursor = (game.game_over_cursor + 1) % 3
+                    elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        if game.game_over_cursor == 0:
+                            game.start_game()
+                        elif game.game_over_cursor == 1:
+                            game.reset(to_menu=True)
+                        else:
+                            running = False
 
                 elif game.state == "playing":
                     if event.key == pygame.K_ESCAPE:
