@@ -93,6 +93,20 @@ if os.path.exists(_icon_path):
 
 clock = pygame.time.Clock()
 
+_FONT_PATH = _asset(os.path.join("gfx", "font.otf"))
+_font_cache: dict = {}
+
+def get_font(size, bold=False):
+    key = (size, bold)
+    if key not in _font_cache:
+        if os.path.exists(_FONT_PATH):
+            _font_cache[key] = pygame.font.Font(_FONT_PATH, size)
+        else:
+            _font_cache[key] = pygame.font.SysFont(
+                "consolas,dejavusansmono,couriernew", size, bold=bold
+            )
+    return _font_cache[key]
+
 
 # ------------------------------------------------------------
 # Sound generation: no external files required
@@ -1011,8 +1025,8 @@ class Game:
         surf.blit(frame, rect)
 
         # Captions + skip hint
-        font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 22, bold=True)
-        small = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 16)
+        font = get_font(22, bold=True)
+        small = get_font(16)
         if self.cut_timer < 1400:
             msg = "ENGINE START"
         elif exit_x > 130:
@@ -1223,8 +1237,8 @@ class Game:
             pygame.draw.line(surf, (0, 0, 8), (0, y), (WIDTH, y))
 
     def draw_ui(self, surf):
-        font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 18)
-        small = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 14)
+        font = get_font(18)
+        small = get_font(14)
 
         x, y = 14, 10
 
@@ -1263,9 +1277,9 @@ class Game:
         overlay.fill((0, 0, 0, 120))
         surf.blit(overlay, (0, 0))
 
-        title_font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 54, bold=True)
-        font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 24)
-        small = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 18)
+        title_font = get_font(54, bold=True)
+        font = get_font(24)
+        small = get_font(18)
 
         # Logo scroll animation: starts above the screen, eases into the middle/top area
         target_y = HEIGHT // 2 - 150
@@ -1324,9 +1338,9 @@ class Game:
         overlay.fill((0, 0, 0, 150))
         surf.blit(overlay, (0, 0))
 
-        title_font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 38, bold=True)
-        font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 26)
-        small = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 18)
+        title_font = get_font(38, bold=True)
+        font = get_font(26)
+        small = get_font(18)
 
         title = title_font.render("SELECT DIFFICULTY", False, (120, 210, 255))
         surf.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 100)))
@@ -1380,9 +1394,9 @@ class Game:
         overlay.fill((0, 0, 0, 160))
         surf.blit(overlay, (0, 0))
 
-        title_font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 38, bold=True)
-        font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 20)
-        small = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 16)
+        title_font = get_font(38, bold=True)
+        font = get_font(20)
+        small = get_font(16)
 
         title = title_font.render("OPTIONS", False, (120, 210, 255))
         surf.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 130)))
@@ -1442,8 +1456,8 @@ class Game:
         overlay.fill((0, 0, 0, 170))
         surf.blit(overlay, (0, 0))
 
-        font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 24)
-        small = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 18)
+        font = get_font(24)
+        small = get_font(18)
 
         # Reserve space for: score (28) + gap (28) + 3 items * 44 + hint area (46)
         menu_items = ["RESTART", "MAIN MENU", "EXIT GAME"]
@@ -1464,7 +1478,7 @@ class Game:
             surf.blit(logo, logo_rect)
             logo_bottom = logo_rect.bottom
         else:
-            title_font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 52, bold=True)
+            title_font = get_font(52, bold=True)
             title = title_font.render("GAME OVER", False, (255, 70, 80))
             surf.blit(title, title.get_rect(centerx=WIDTH // 2, top=top_margin))
             logo_bottom = top_margin + title.get_height()
