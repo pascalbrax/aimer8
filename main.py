@@ -25,6 +25,7 @@ ASSET_PATH = _asset(os.path.join("gfx", "sprites.png"))
 
 MAIN_MUSIC = _asset(os.path.join("audio", "main.mp3"))
 LEVEL_MUSIC = _asset(os.path.join("audio", "level.mp3"))
+SPOOLING_SFX = _asset(os.path.join("audio", "spooling.mp3"))
 
 VOL = {"music": 0.45, "sfx": 0.5}
 _current_music = None
@@ -109,6 +110,20 @@ def make_tone(freq=440, duration=0.12, volume=0.35, slide=0.0, noise=False):
 
 LASER_SOUND = make_tone(freq=920, duration=0.09, volume=0.28, slide=2600)
 BOOM_SOUND = make_tone(freq=110, duration=0.22, volume=0.45, noise=True)
+
+
+def load_sfx(path):
+    """Load a one-shot sound effect from a file, tolerating a missing file."""
+    try:
+        if os.path.exists(path):
+            return pygame.mixer.Sound(path)
+        print(f"Missing sound file: {path}")
+    except pygame.error as exc:
+        print(f"Could not load sound {path}: {exc}")
+    return None
+
+
+SPOOLING_SOUND = load_sfx(SPOOLING_SFX)
 
 
 def play(sound):
@@ -830,6 +845,169 @@ class Game:
         lives = LIVES_BY_DIFFICULTY[DIFF_OPTIONS[self.diff_cursor]]
         self.reset(to_menu=False, lives=lives)
 
+    def start_intro(self):
+        """Set up the playing world, but run the launch cutscene first.
+
+        The world is fully initialised (enemies just don't spawn while we are
+        in the 'intro' state). When the ship clears the carrier's bay door the
+        state flips to 'playing' and the level music is already rolling."""
+        lives = LIVES_BY_DIFFICULTY[DIFF_OPTIONS[self.diff_cursor]]
+        self.reset(to_menu=False, lives=lives)
+
+        self.state = "intro"
+        self.player.rect.x = 130
+        self.player.rect.centery = HEIGHT // 2
+
+        self.cut_timer = 0
+        self.cut_scroll = 0.0
+        self.cut_speed = 0.0
+        self.cut_anim = 0
+        self.cut_frame = 0
+        self.cut_exit = 5200                       # world-x of the bay door
+        self.cut_ribs = list(range(-220, self.cut_exit + 1, 200))
+
+        play(SPOOLING_SOUND)                       # engine spool-up during launch
+
+    def update_cutscene(self, dt):
+        self.cut_timer += dt
+
+        # Engine-flicker animation for the parked/launching ship
+        self.cut_anim += dt
+        if self.cut_anim >= PLAYER_ANIM_MS:
+            self.cut_anim -= PLAYER_ANIM_MS
+            self.cut_frame = (self.cut_frame + 1) % len(self.player.frames)
+
+        # Speed profile: idle hum -> hard burn -> launch
+        if self.cut_timer < 900:
+            target = 0.5
+        elif self.cut_timer < 3600:
+            target = 30.0
+        else:
+            target = 46.0
+
+        self.cut_speed += (target - self.cut_speed) * 0.045
+        self.cut_scroll += self.cut_speed
+
+        # Cutscene ends once the bay door has scrolled fully off the left edge,
+        # i.e. the ship is surrounded by open space.
+        if self.cut_scroll >= self.cut_exit + 150:
+            self.state = "playing"
+            self.spawn_timer = 0
+            self.player.rect.x = 130
+            self.player.rect.centery = HEIGHT // 2
+            if SPOOLING_SOUND:
+                SPOOLING_SOUND.stop()
+
+    def draw_cutscene(self, surf):
+        GRAY_DARK = (40, 43, 50)
+        GRAY = (74, 79, 90)
+        GRAY_MID = (95, 101, 115)
+        GRAY_LIGHT = (140, 147, 162)
+        EDGE = (170, 178, 195)
+
+        scroll = self.cut_scroll
+        exit_x = int(self.cut_exit - scroll)
+
+        ceil_h = 96
+        floor_h = 120
+        floor_y = HEIGHT - floor_h
+
+        # Hangar interior only exists to the left of the bay door.
+        right = max(0, min(WIDTH, exit_x))
+
+        if right > 0:
+            # Ceiling slab
+            pygame.draw.rect(surf, GRAY_DARK, (0, 0, right, ceil_h))
+            pygame.draw.polygon(
+                surf, GRAY,
+                [(0, ceil_h), (right, ceil_h), (right, ceil_h - 14), (0, ceil_h - 22)],
+            )
+            pygame.draw.line(surf, EDGE, (0, ceil_h), (right, ceil_h), 2)
+
+            # Floor slab
+            pygame.draw.rect(surf, GRAY_DARK, (0, floor_y, right, floor_h))
+            pygame.draw.polygon(
+                surf, GRAY,
+                [(0, floor_y), (right, floor_y), (right, floor_y + 16), (0, floor_y + 24)],
+            )
+            pygame.draw.line(surf, EDGE, (0, floor_y), (right, floor_y), 2)
+
+            # Structural ribs / beams running ceiling-to-floor
+            for rib in self.cut_ribs:
+                sx = int(rib - scroll)
+                if sx < -60 or sx > right:
+                    continue
+                bw = 30
+                pygame.draw.polygon(surf, GRAY_MID, [
+                    (sx - bw // 2, 0), (sx + bw // 2, 0),
+                    (sx + bw // 2 - 6, ceil_h), (sx - bw // 2 + 6, ceil_h),
+                ])
+                pygame.draw.line(surf, GRAY_LIGHT,
+                                 (sx - bw // 2 + 6, 0), (sx - bw // 2 + 6, ceil_h), 2)
+                pygame.draw.polygon(surf, GRAY_MID, [
+                    (sx - bw // 2 + 6, floor_y), (sx + bw // 2 - 6, floor_y),
+                    (sx + bw // 2, HEIGHT), (sx - bw // 2, HEIGHT),
+                ])
+                pygame.draw.line(surf, GRAY_LIGHT,
+                                 (sx - bw // 2 + 6, floor_y), (sx - bw // 2, HEIGHT), 2)
+
+            # Floor lane lights streaking by to sell the sense of speed
+            light_sp = 200
+            lx = -(scroll % light_sp)
+            while lx < right:
+                if lx >= 0:
+                    pygame.draw.rect(surf, (90, 160, 200),
+                                     (int(lx), floor_y + 46, 60, 6))
+                lx += light_sp
+
+        # Bay door: bright threshold with the glow of open space beyond it
+        if -60 <= exit_x <= WIDTH + 60:
+            glow = pygame.Surface((140, HEIGHT), pygame.SRCALPHA)
+            for i in range(70):
+                a = int(130 * (1 - i / 70))
+                pygame.draw.line(glow, (180, 220, 255, a), (70 + i, 0), (70 + i, HEIGHT))
+                pygame.draw.line(glow, (180, 220, 255, a), (70 - i, 0), (70 - i, HEIGHT))
+            surf.blit(glow, (exit_x - 70, 0))
+
+            pygame.draw.rect(surf, GRAY_LIGHT, (exit_x - 8, 0, 14, ceil_h + 12))
+            pygame.draw.rect(surf, GRAY_LIGHT, (exit_x - 8, floor_y - 12, 14, floor_h + 12))
+            pygame.draw.line(surf, EDGE, (exit_x, 0), (exit_x, HEIGHT), 3)
+
+        # The ship: engine-animated, vibrating harder the faster it goes,
+        # with an exhaust plume that stretches under thrust.
+        frame = self.player.frames[self.cut_frame % len(self.player.frames)]
+        shake = min(4, int(self.cut_speed / 12)) if self.cut_speed > 6 else 0
+        rect = frame.get_rect()
+        rect.x = self.player.rect.x + random.randint(-shake, shake)
+        rect.centery = HEIGHT // 2 + random.randint(-shake, shake)
+
+        flame_len = int(18 + self.cut_speed * 3.4)
+        fx, fy = rect.left + 6, rect.centery
+        pygame.draw.polygon(surf, (40, 120, 255), [
+            (fx, fy - 9), (fx, fy + 9), (fx - flame_len, fy + random.randint(-3, 3)),
+        ])
+        pygame.draw.polygon(surf, (170, 230, 255), [
+            (fx, fy - 5), (fx, fy + 5),
+            (fx - int(flame_len * 0.6), fy + random.randint(-2, 2)),
+        ])
+        surf.blit(frame, rect)
+
+        # Captions + skip hint
+        font = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 22, bold=True)
+        small = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 16)
+        if self.cut_timer < 1400:
+            msg = "ENGINE START"
+        elif exit_x > 130:
+            msg = "LAUNCHING..."
+        else:
+            msg = ""
+        if msg:
+            t = font.render(msg, False, (140, 220, 255))
+            surf.blit(t, t.get_rect(center=(WIDTH // 2, 42)))
+
+        skip = small.render("SPACE / ENTER  SKIP", False, (120, 140, 170))
+        surf.blit(skip, (WIDTH - skip.get_width() - 14, HEIGHT - 26))
+
     def fire(self):
         if self.state != "playing":
             return
@@ -887,6 +1065,10 @@ class Game:
 
         if self.state == "menu":
             self.menu_timer += dt
+
+        if self.state == "intro":
+            self.update_cutscene(dt)
+            return
 
         if self.state != "playing":
             self.screen_shake = 0
@@ -1265,6 +1447,9 @@ class Game:
 
             self.draw_ui(world)
 
+        elif self.state == "intro":
+            self.draw_cutscene(world)
+
         elif self.state == "menu":
             self.draw_menu(world)
 
@@ -1320,7 +1505,20 @@ def main():
                     elif event.key in (pygame.K_RIGHT, pygame.K_d):
                         game.diff_cursor = (game.diff_cursor + 1) % len(DIFF_OPTIONS)
                     elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                        game.start_game()
+                        game.start_intro()
+
+                elif game.state == "intro":
+                    if event.key == pygame.K_ESCAPE:
+                        if SPOOLING_SOUND:
+                            SPOOLING_SOUND.stop()
+                        game.reset(to_menu=True)
+                    elif event.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER):
+                        game.state = "playing"
+                        game.spawn_timer = 0
+                        game.player.rect.x = 130
+                        game.player.rect.centery = HEIGHT // 2
+                        if SPOOLING_SOUND:
+                            SPOOLING_SOUND.stop()
 
                 elif game.state == "options":
                     if event.key == pygame.K_ESCAPE:
