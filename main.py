@@ -29,6 +29,7 @@ LEVEL_MUSIC = _asset(os.path.join("audio", "level.mp3"))
 SPOOLING_SFX = _asset(os.path.join("audio", "spooling.mp3"))
 
 VOL = {"music": 0.45, "sfx": 0.5}
+SETTINGS = {"fullscreen": False}
 _current_music = None
 
 PLAYER_SPEED = 5.0
@@ -69,7 +70,20 @@ PLAYER_ANIM_MS = 130   # ms between player engine-animation frames
 pygame.mixer.pre_init(44100, -16, 1, 512)
 pygame.init()
 
+LOGICAL_RECT = pygame.Rect(0, 0, WIDTH, HEIGHT)
+
+
+def set_display_mode(fullscreen):
+    global screen
+    if fullscreen:
+        screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+    else:
+        screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    SETTINGS["fullscreen"] = fullscreen
+
+
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
+render_surf = pygame.Surface((WIDTH, HEIGHT))
 pygame.display.set_caption(GAME_NAME)
 
 _icon_path = _asset(os.path.join("gfx", "icon.png"))
@@ -502,7 +516,7 @@ class Player:
 
         self.rect.x += int(dx)
         self.rect.y += int(dy)
-        self.rect.clamp_ip(screen.get_rect())
+        self.rect.clamp_ip(LOGICAL_RECT)
 
         self.blink_timer = max(0, self.blink_timer - dt)
         self.invuln_timer = max(0, self.invuln_timer - dt)
@@ -1371,29 +1385,27 @@ class Game:
         small = pygame.font.SysFont("consolas,dejavusansmono,couriernew", 16)
 
         title = title_font.render("OPTIONS", False, (120, 210, 255))
-        surf.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 110)))
+        surf.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 130)))
+
+        bar_w, bar_h = 300, 16
+        row_h = 68
 
         sliders = [
             ("MUSIC VOLUME", VOL["music"]),
             ("SFX VOLUME",   VOL["sfx"]),
         ]
-        bar_w, bar_h = 300, 16
-        row_h = 72   # vertical space per slider (label + gap + bar)
 
         for i, (label, vol) in enumerate(sliders):
-            # centre of this slider block
-            block_cy = HEIGHT // 2 - 20 + i * row_h
-            label_y  = block_cy - 14   # top of label text
-            bar_y    = block_cy + 12   # top of bar
+            block_cy = HEIGHT // 2 - 50 + i * row_h
+            label_y  = block_cy - 14
+            bar_y    = block_cy + 12
 
             selected = (i == self.options_cursor)
             col = (255, 230, 80) if selected else (150, 150, 180)
 
-            # label centered above the bar
             lbl = font.render(label, False, col)
             surf.blit(lbl, lbl.get_rect(centerx=WIDTH // 2, y=label_y))
 
-            # bar centered on screen
             bar_x = WIDTH // 2 - bar_w // 2
             pygame.draw.rect(surf, (40, 40, 60), (bar_x, bar_y, bar_w, bar_h))
             fill = int(bar_w * vol)
@@ -1402,12 +1414,28 @@ class Game:
                 pygame.draw.rect(surf, fill_col, (bar_x, bar_y, fill, bar_h))
             pygame.draw.rect(surf, col, (bar_x, bar_y, bar_w, bar_h), 2)
 
-            # percentage to the right of bar
             pct = small.render(f"{int(vol * 100)}%", False, col)
             surf.blit(pct, (bar_x + bar_w + 10, bar_y + bar_h // 2 - pct.get_height() // 2))
 
-        hint = small.render("UP / DOWN  SELECT SLIDER     LEFT / RIGHT  ADJUST     ESC  BACK", False, (130, 130, 160))
-        surf.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 110)))
+        # Fullscreen toggle (item index 2)
+        fs_y = HEIGHT // 2 - 50 + 2 * row_h
+        selected_fs = (self.options_cursor == 2)
+        col_fs = (255, 230, 80) if selected_fs else (150, 150, 180)
+        lbl_fs = font.render("FULLSCREEN", False, col_fs)
+        surf.blit(lbl_fs, lbl_fs.get_rect(centerx=WIDTH // 2, y=fs_y - 14))
+
+        state_str = "ON" if SETTINGS["fullscreen"] else "OFF"
+        state_col = (80, 220, 120) if SETTINGS["fullscreen"] else (180, 80, 80)
+        bar_x = WIDTH // 2 - bar_w // 2
+        pygame.draw.rect(surf, (40, 40, 60), (bar_x, fs_y + 12, bar_w, bar_h))
+        if SETTINGS["fullscreen"]:
+            pygame.draw.rect(surf, state_col, (bar_x, fs_y + 12, bar_w, bar_h))
+        pygame.draw.rect(surf, col_fs, (bar_x, fs_y + 12, bar_w, bar_h), 2)
+        state_lbl = small.render(state_str, False, col_fs)
+        surf.blit(state_lbl, (bar_x + bar_w + 10, fs_y + 12 + bar_h // 2 - state_lbl.get_height() // 2))
+
+        hint = small.render("UP / DOWN  SELECT     LEFT / RIGHT  ADJUST     ENTER  TOGGLE     ESC  BACK", False, (130, 130, 160))
+        surf.blit(hint, hint.get_rect(center=(WIDTH // 2, HEIGHT - 28)))
 
     def draw_game_over(self, surf):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -1575,21 +1603,24 @@ def main():
                     if event.key == pygame.K_ESCAPE:
                         game.state = "menu"
                     elif event.key in (pygame.K_UP, pygame.K_w):
-                        game.options_cursor = (game.options_cursor - 1) % 2
+                        game.options_cursor = (game.options_cursor - 1) % 3
                     elif event.key in (pygame.K_DOWN, pygame.K_s):
-                        game.options_cursor = (game.options_cursor + 1) % 2
+                        game.options_cursor = (game.options_cursor + 1) % 3
                     elif event.key in (pygame.K_LEFT, pygame.K_a):
                         if game.options_cursor == 0:
                             VOL["music"] = max(0.0, round(VOL["music"] - 0.05, 2))
                             pygame.mixer.music.set_volume(VOL["music"])
-                        else:
+                        elif game.options_cursor == 1:
                             VOL["sfx"] = max(0.0, round(VOL["sfx"] - 0.05, 2))
                     elif event.key in (pygame.K_RIGHT, pygame.K_d):
                         if game.options_cursor == 0:
                             VOL["music"] = min(1.0, round(VOL["music"] + 0.05, 2))
                             pygame.mixer.music.set_volume(VOL["music"])
-                        else:
+                        elif game.options_cursor == 1:
                             VOL["sfx"] = min(1.0, round(VOL["sfx"] + 0.05, 2))
+                    elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        if game.options_cursor == 2:
+                            set_display_mode(not SETTINGS["fullscreen"])
 
                 elif game.state == "game_over":
                     if event.key == pygame.K_ESCAPE:
@@ -1613,7 +1644,19 @@ def main():
                         game.fire()
 
         game.update(dt)
-        game.draw(screen)
+        game.draw(render_surf)
+
+        if SETTINGS["fullscreen"]:
+            sw, sh = screen.get_size()
+            scale = min(sw / WIDTH, sh / HEIGHT)
+            scaled_w = int(WIDTH * scale)
+            scaled_h = int(HEIGHT * scale)
+            scaled = pygame.transform.scale(render_surf, (scaled_w, scaled_h))
+            screen.fill((0, 0, 0))
+            screen.blit(scaled, ((sw - scaled_w) // 2, (sh - scaled_h) // 2))
+        else:
+            screen.blit(render_surf, (0, 0))
+
         pygame.display.flip()
 
     pygame.mixer.music.stop()
