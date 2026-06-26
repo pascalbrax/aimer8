@@ -332,6 +332,19 @@ def make_fallback_bullet(size=(20, 8), color=(60, 220, 255)):
     return surf
 
 
+def make_fallback_powerup(index, size=(52, 52)):
+    surf = pygame.Surface(size, pygame.SRCALPHA)
+    cx, cy = size[0] // 2, size[1] // 2
+    colors = [(40, 180, 255), (80, 255, 120), (255, 140, 40), (255, 60, 60)]
+    labels = ["3B", "3D", "MS", "1UP"]
+    pygame.draw.circle(surf, colors[index], (cx, cy), cx - 2)
+    pygame.draw.circle(surf, (255, 255, 255), (cx, cy), cx - 2, 2)
+    font = pygame.font.SysFont("consolas", 14, bold=True)
+    t = font.render(labels[index], True, (0, 0, 0))
+    surf.blit(t, t.get_rect(center=(cx, cy)))
+    return surf
+
+
 def make_fallback_explosion(size=(42, 42), frame=0):
     surf = pygame.Surface(size, pygame.SRCALPHA)
     cx, cy = size[0] // 2, size[1] // 2
@@ -347,7 +360,7 @@ def make_fallback_explosion(size=(42, 42), frame=0):
     return surf
 
 
-# Sprite locations on gfx/sprites.png (1254x1254, real alpha), as (x, y, w, h).
+# Sprite locations on gfx/sprites.png (1254x1554, real alpha), as (x, y, w, h).
 PLAYER_FRAMES_SRC = [(28, 71, 167, 135), (246, 70, 167, 135)]
 ENEMY_SRC = [
     (458, 64, 159, 145), (635, 64, 132, 141), (790, 68, 131, 140),
@@ -364,10 +377,18 @@ EXPLOSION_SRC = [
 PLANET_SRC = [(450, 734, 210, 209), (694, 731, 213, 215)]
 STATION_SRC = (938, 731, 267, 231)
 NEBULA_SRC = [(76, 974, 506, 236), (623, 975, 556, 236)]
+POWERUP_SRC = [
+    (95,  1284, 230, 224),   # 0: triple beam
+    (450, 1265, 183, 243),   # 1: triple direction
+    (732, 1273, 207, 236),   # 2: missile
+    (997, 1299, 209, 219),   # 3: extra life
+]
+POWERUP_TYPES = ["triple_beam", "triple_dir", "missile", "extra_life"]
 
 PLAYER_BOX = (54, 40)     # shared footprint for the two animation frames
 ENEMY_BOX = (54, 46)      # shared footprint for the enemy roster
 EXPLOSION_BOXES = [(46, 46), (56, 56), (68, 68), (80, 80), (96, 96)]
+POWERUP_BOX = (52, 52)
 
 
 def load_assets():
@@ -391,6 +412,7 @@ def load_assets():
         "planets": [],
         "station": None,
         "nebulae": [],
+        "powerups": [make_fallback_powerup(i) for i in range(4)],
     }
 
     if not os.path.exists(ASSET_PATH):
@@ -413,6 +435,7 @@ def load_assets():
         assets["planets"] = [crop_alpha_fit(sheet, r, (96, 96)) for r in PLANET_SRC]
         assets["station"] = crop_alpha_fit(sheet, STATION_SRC, (120, 100))
         assets["nebulae"] = [crop_alpha_fit(sheet, r, (300, 150)) for r in NEBULA_SRC]
+        assets["powerups"] = [crop_alpha_fit(sheet, r, POWERUP_BOX) for r in POWERUP_SRC]
 
     except Exception as exc:
         print("Sprite sheet loaded, but slicing failed. Using fallback sprites.")
@@ -551,18 +574,125 @@ class Player:
 
 
 class Bullet:
-    def __init__(self, x, y):
-        self.image = random.choice(ASSETS["bullets"])
+    def __init__(self, x, y, vx=BULLET_SPEED, vy=0):
+        img = random.choice(ASSETS["bullets"])
+        if vy < 0:
+            img = pygame.transform.rotate(img, -90)
+        elif vy > 0:
+            img = pygame.transform.rotate(img, 90)
+        self.image = img
+        self.vx = vx
+        self.vy = vy
         self.rect = self.image.get_rect(midleft=(x, y))
         self.dead = False
 
     def update(self):
-        self.rect.x += int(BULLET_SPEED)
-        if self.rect.left > WIDTH:
+        self.rect.x += int(self.vx)
+        self.rect.y += int(self.vy)
+        if (self.rect.left > WIDTH or self.rect.right < 0
+                or self.rect.top > HEIGHT or self.rect.bottom < 0):
             self.dead = True
 
     def draw(self, surf):
         surf.blit(self.image, self.rect)
+
+
+class Missile:
+    """Homing missile: steers toward the closest living enemy."""
+
+    _IMG = None  # class-level cached surface
+
+    @classmethod
+    def _make_img(cls):
+        if cls._IMG is None:
+            s = pygame.Surface((18, 8), pygame.SRCALPHA)
+            pygame.draw.polygon(s, (200, 200, 210), [(18, 4), (10, 0), (0, 2), (0, 6), (10, 8)])
+            pygame.draw.rect(s, (255, 120, 30), (0, 2, 6, 4))
+            cls._IMG = s
+        return cls._IMG
+
+    def __init__(self, x, y, enemies):
+        self.enemies = enemies
+        self.fx = float(x)
+        self.fy = float(y)
+        self.speed = BULLET_SPEED * 0.85
+        self.vx = self.speed
+        self.vy = 0.0
+        self.dead = False
+        self._base_img = self._make_img()
+        self.image = self._base_img
+        self.rect = self.image.get_rect(midleft=(x, y))
+
+    def update(self):
+        target = None
+        best = float('inf')
+        for e in self.enemies:
+            if e.dead:
+                continue
+            dx = e.rect.centerx - self.fx
+            dy = e.rect.centery - self.fy
+            d = dx * dx + dy * dy
+            if d < best:
+                best = d
+                target = e
+
+        if target:
+            dx = target.rect.centerx - self.fx
+            dy = target.rect.centery - self.fy
+            dist = math.sqrt(dx * dx + dy * dy) or 1
+            tx = dx / dist * self.speed
+            ty = dy / dist * self.speed
+            self.vx += (tx - self.vx) * 0.14
+            self.vy += (ty - self.vy) * 0.14
+            spd = math.sqrt(self.vx ** 2 + self.vy ** 2) or 1
+            self.vx = self.vx / spd * self.speed
+            self.vy = self.vy / spd * self.speed
+
+        self.fx += self.vx
+        self.fy += self.vy
+        self.rect.center = (int(self.fx), int(self.fy))
+
+        angle = -math.degrees(math.atan2(self.vy, self.vx))
+        self.image = pygame.transform.rotate(self._base_img, angle)
+        self.rect = self.image.get_rect(center=self.rect.center)
+
+        if (self.rect.left > WIDTH + 30 or self.rect.right < -30
+                or self.rect.top > HEIGHT + 30 or self.rect.bottom < -30):
+            self.dead = True
+
+    def draw(self, surf):
+        surf.blit(self.image, self.rect)
+
+
+class Powerup:
+    """A collectible powerup that floats from right to left with a gentle bob."""
+
+    def __init__(self, ptype_index):
+        self.ptype = POWERUP_TYPES[ptype_index]
+        self.image = ASSETS["powerups"][ptype_index]
+        self.rect = self.image.get_rect()
+        self.rect.left = WIDTH + 10
+        self.base_y = random.randrange(60, HEIGHT - 60)
+        self.rect.centery = self.base_y
+        self.speed = 2.2
+        self.t = 0
+        self.dead = False
+
+    def update(self, dt):
+        self.t += dt
+        self.rect.x -= int(self.speed)
+        self.rect.centery = int(self.base_y + 14 * math.sin(self.t * 0.003))
+        if self.rect.right < -10:
+            self.dead = True
+
+    def draw(self, surf):
+        surf.blit(self.image, self.rect)
+        # pulsing glow ring
+        alpha = int(80 + 60 * math.sin(self.t * 0.006))
+        glow = pygame.Surface((self.rect.width + 16, self.rect.height + 16), pygame.SRCALPHA)
+        pygame.draw.ellipse(glow, (255, 230, 80, alpha),
+                            (0, 0, glow.get_width(), glow.get_height()), 3)
+        surf.blit(glow, (self.rect.x - 8, self.rect.y - 8))
 
 
 class EnemyBullet:
@@ -831,6 +961,10 @@ class Game:
         self.enemy_bullets = []
         self.enemies = []
         self.explosions = []
+        self.powerups = []
+        self.active_powerup = None      # current weapon modifier
+        self.powerup_milestone = 0      # last 1000-pt threshold that spawned a powerup
+        self._powerup_rng = random.Random(20250626)
 
         self.score = 0
         self.total_spawned = 0
@@ -1041,13 +1175,28 @@ class Game:
         surf.blit(skip, (WIDTH - skip.get_width() - 14, HEIGHT - 26))
 
     def fire(self):
-        if self.state != "playing":
+        if self.state != "playing" or self.death_timer > 0:
             return
 
         now = pygame.time.get_ticks()
         if now - self.last_fire >= FIRE_COOLDOWN:
             self.last_fire = now
-            self.bullets.append(Bullet(self.player.rect.right - 4, self.player.rect.centery))
+            x = self.player.rect.right - 4
+            cy = self.player.rect.centery
+            pw = self.active_powerup
+
+            if pw == "triple_beam":
+                for dy in (-9, 0, 9):
+                    self.bullets.append(Bullet(x, cy + dy))
+            elif pw == "triple_dir":
+                self.bullets.append(Bullet(x, cy))
+                self.bullets.append(Bullet(x, cy, vx=0, vy=-BULLET_SPEED))
+                self.bullets.append(Bullet(x, cy, vx=0, vy=BULLET_SPEED))
+            elif pw == "missile":
+                self.bullets.append(Missile(x, cy, self.enemies))
+            else:
+                self.bullets.append(Bullet(x, cy))
+
             play(LASER_SOUND)
 
     def spawn_enemy(self):
@@ -1126,6 +1275,12 @@ class Game:
             self.spawn_timer = 0
             self.spawn_enemy()
 
+        # Spawn a powerup at every 1000-point milestone
+        milestone = self.score // 1000
+        if milestone > self.powerup_milestone:
+            self.powerup_milestone = milestone
+            self.powerups.append(Powerup(self._powerup_rng.randrange(4)))
+
         for bullet in self.bullets:
             bullet.update()
 
@@ -1141,12 +1296,16 @@ class Game:
         for explosion in self.explosions:
             explosion.update(dt)
 
+        for pu in self.powerups:
+            pu.update(dt)
+
         self.handle_collisions()
 
         self.bullets = [b for b in self.bullets if not b.dead]
         self.enemy_bullets = [b for b in self.enemy_bullets if not b.dead]
         self.enemies = [e for e in self.enemies if not e.dead]
         self.explosions = [e for e in self.explosions if not e.dead]
+        self.powerups = [p for p in self.powerups if not p.dead]
 
     def handle_collisions(self):
         for bullet in self.bullets:
@@ -1188,6 +1347,19 @@ class Game:
                         enemy.dead = True
                     self._damage_player(enemy.rect.center)
                     break
+
+        # Player collecting powerups
+        if not self.game_over:
+            for pu in self.powerups:
+                if pu.dead:
+                    continue
+                if self.player.rect.colliderect(pu.rect):
+                    pu.dead = True
+                    if pu.ptype == "extra_life":
+                        self.player.lives += 1
+                    else:
+                        self.active_powerup = pu.ptype
+                    play(BOOM_SOUND)
 
         # Boss bullets hitting the player
         if not self.game_over:
@@ -1271,6 +1443,17 @@ class Game:
 
         hint = small.render("WASD / ARROWS MOVE   SPACE FIRE", False, (110, 170, 210))
         surf.blit(hint, (WIDTH - hint.get_width() - 14, 12))
+
+        # Active powerup icon + label in top-right below hint
+        if self.active_powerup:
+            idx = POWERUP_TYPES.index(self.active_powerup)
+            pu_img = pygame.transform.scale(ASSETS["powerups"][idx], (28, 28))
+            pu_labels = {"triple_beam": "TRIPLE BEAM", "triple_dir": "SPREAD",
+                         "missile": "MISSILES", "extra_life": ""}
+            lbl = small.render(pu_labels[self.active_powerup], False, (255, 230, 80))
+            ix = WIDTH - lbl.get_width() - pu_img.get_width() - 20
+            surf.blit(pu_img, (ix, 32))
+            surf.blit(lbl, (ix + pu_img.get_width() + 6, 36))
 
     def draw_menu(self, surf):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -1524,6 +1707,9 @@ class Game:
         self.draw_background(world, ox, oy)
 
         if self.state == "playing":
+            for pu in self.powerups:
+                pu.draw(world)
+
             for bullet in self.bullets:
                 bullet.draw(world)
 
