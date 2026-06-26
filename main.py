@@ -1275,11 +1275,13 @@ class Game:
             self.spawn_timer = 0
             self.spawn_enemy()
 
-        # Spawn a powerup at every 1000-point milestone
-        milestone = self.score // 1000
+        # Spawn a powerup at every 10000-point milestone
+        milestone = self.score // 10000
         if milestone > self.powerup_milestone:
             self.powerup_milestone = milestone
-            self.powerups.append(Powerup(self._powerup_rng.randrange(4)))
+            active_idx = POWERUP_TYPES.index(self.active_powerup) if self.active_powerup else None
+            choices = [i for i in range(4) if i != active_idx]
+            self.powerups.append(Powerup(self._powerup_rng.choice(choices)))
 
         for bullet in self.bullets:
             bullet.update()
