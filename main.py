@@ -513,6 +513,8 @@ class Player:
         self.invuln_timer = 900
 
     def draw(self, surf):
+        if self.lives <= 0:
+            return
         if self.blink_timer > 0:
             if (pygame.time.get_ticks() // 90) % 2 == 0:
                 surf.blit(self.image, self.rect)
@@ -814,6 +816,7 @@ class Game:
 
         self.last_fire = 0
         self.screen_shake = 0
+        self.death_timer = 0   # ms remaining before game over screen after player death
 
         self.state = "menu" if to_menu else "playing"
         self.game_over = False
@@ -1077,11 +1080,17 @@ class Game:
 
         self.screen_shake = max(0, self.screen_shake - dt)
 
-        self.player.update(dt)
+        if self.death_timer > 0:
+            self.death_timer -= dt
+            if self.death_timer <= 0:
+                self.state = "game_over"
+                self.screen_shake = 0
+        else:
+            self.player.update(dt)
 
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_SPACE]:
-            self.fire()
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_SPACE]:
+                self.fire()
 
         # While a boss is on screen, hold back all other spawns.
         self.spawn_timer += dt
@@ -1140,7 +1149,7 @@ class Game:
 
                     break
 
-        if self.player.invuln_timer <= 0:
+        if not self.game_over and self.player.invuln_timer <= 0:
             for enemy in self.enemies:
                 if enemy.dead:
                     continue
@@ -1153,14 +1162,15 @@ class Game:
                     break
 
         # Boss bullets hitting the player
-        for eb in self.enemy_bullets:
-            if eb.dead:
-                continue
-            if self.player.rect.colliderect(eb.rect):
-                eb.dead = True
-                if self.player.invuln_timer <= 0:
-                    self._damage_player(self.player.rect.center)
-                break
+        if not self.game_over:
+            for eb in self.enemy_bullets:
+                if eb.dead:
+                    continue
+                if self.player.rect.colliderect(eb.rect):
+                    eb.dead = True
+                    if self.player.invuln_timer <= 0:
+                        self._damage_player(self.player.rect.center)
+                    break
 
     def _damage_player(self, center):
         """Apply one hit to the player and handle game-over."""
@@ -1169,9 +1179,8 @@ class Game:
         self.screen_shake = 420
         play(BOOM_SOUND)
         if self.player.lives <= 0:
-            self.state = "game_over"
+            self.death_timer = 2000   # 2-second delay before game over screen
             self.game_over = True
-            self.screen_shake = 0
             set_music("main")
 
     def _boss_death_fx(self, boss):
