@@ -25,7 +25,8 @@ GAME_NAME = "Aimer 8"
 ASSET_PATH = _asset(os.path.join("gfx", "sprites.png"))
 
 MAIN_MUSIC = _asset(os.path.join("audio", "main.mp3"))
-LEVEL_MUSIC = _asset(os.path.join("audio", "level.mp3"))
+LEVEL_MUSIC = _asset(os.path.join("audio", "level01.mp3"))  # fallback
+LEVEL_CLEAR_SFX = _asset(os.path.join("audio", "level_clear.mp3"))
 SPOOLING_SFX = _asset(os.path.join("audio", "spooling.mp3"))
 
 VOL = {"music": 0.45, "sfx": 0.5}
@@ -38,7 +39,6 @@ FIRE_COOLDOWN = 170  # ms
 
 DIFF_OPTIONS = ["easy", "normal", "hard"]
 LIVES_BY_DIFFICULTY = {"easy": 5, "normal": 3, "hard": 1}
-START_LIVES = 3  # kept as fallback default
 
 BASE_ENEMY_SPEED = 3.0
 SPEED_INCREASE_EVERY = 90
@@ -153,6 +153,7 @@ def load_sfx(path):
 
 
 SPOOLING_SOUND = load_sfx(SPOOLING_SFX)
+LEVEL_CLEAR_SOUND = load_sfx(LEVEL_CLEAR_SFX)
 
 
 def play(sound):
@@ -167,7 +168,7 @@ def set_music(track):
     """
     track can be:
     - "main"  -> audio/main.mp3, used on title and game over
-    - "level" -> audio/level.mp3, used during gameplay
+    - "level" -> audio/level01.mp3, used as the initial level track
     """
     global _current_music
 
@@ -199,10 +200,42 @@ def set_music(track):
         print(f"Could not play music {path}: {exc}")
         _current_music = None
 
+
+def stop_music():
+    global _current_music
+    try:
+        pygame.mixer.music.stop()
+    except pygame.error:
+        pass
+    _current_music = None
+
+
+def set_level_music(level):
+    """Play audio/levelNN.mp3 for the given level, falling back to level01."""
+    global _current_music
+    tag = f"level{level:02d}"
+    if _current_music == tag:
+        return
+    path = _asset(os.path.join("audio", f"level{level:02d}.mp3"))
+    if not os.path.exists(path):
+        path = LEVEL_MUSIC  # level01.mp3 fallback
+    try:
+        pygame.mixer.music.stop()
+        if os.path.exists(path):
+            pygame.mixer.music.load(path)
+            pygame.mixer.music.set_volume(VOL["music"])
+            pygame.mixer.music.play(-1)
+            _current_music = tag
+        else:
+            _current_music = None
+    except pygame.error as exc:
+        print(f"Could not play music {path}: {exc}")
+        _current_music = None
+
 # ------------------------------------------------------------
 # Asset loading and sprite-sheet slicing
 # The generated sheet is not guaranteed to be exactly 512/1024,
-# so these rects are proportional to the generated 1254x1254 sheet.
+# so these rects are proportional to the generated 1254x1554 sheet.
 # ------------------------------------------------------------
 
 def transparent_green(surface):
@@ -246,24 +279,6 @@ def trim_alpha(surface):
     if rect.width <= 0 or rect.height <= 0:
         return surface
     return surface.subsurface(rect).copy()
-
-
-def pixel_scale(surface, size):
-    return pygame.transform.scale(surface, size)
-
-
-def crop_alpha(sheet, rect, out_size):
-    """Crop a sprite from an alpha sheet (sprites.png), trim padding, scale to out_size.
-
-    rect is (x, y, w, h) in absolute sheet pixels. The sheet already carries a
-    real alpha channel, so no chroma-key removal is needed.
-    """
-    part = trim_alpha(sheet.subsurface(rect).copy())
-
-    if part.get_width() <= 2 or part.get_height() <= 2:
-        raise ValueError("Empty sprite crop")
-
-    return pixel_scale(part, out_size)
 
 
 def crop_alpha_fit(sheet, rect, box):
@@ -339,7 +354,7 @@ def make_fallback_powerup(index, size=(52, 52)):
     labels = ["3B", "3D", "MS", "1UP"]
     pygame.draw.circle(surf, colors[index], (cx, cy), cx - 2)
     pygame.draw.circle(surf, (255, 255, 255), (cx, cy), cx - 2, 2)
-    font = pygame.font.SysFont("consolas", 14, bold=True)
+    font = get_font(14)
     t = font.render(labels[index], True, (0, 0, 0))
     surf.blit(t, t.get_rect(center=(cx, cy)))
     return surf
@@ -515,7 +530,7 @@ class DistantObject:
 # ------------------------------------------------------------
 
 class Player:
-    def __init__(self, lives=START_LIVES):
+    def __init__(self, lives=3):
         self.frames = ASSETS["player"]
         self.frame_idx = 0
         self.anim_timer = 0
@@ -720,7 +735,7 @@ class EnemyBullet:
 
 
 class Enemy:
-    def __init__(self, speed, big=False):
+    def __init__(self, speed, big=False, fire_cd=None):
         self.big = big
 
         if self.big:
@@ -741,13 +756,21 @@ class Enemy:
         self.rect.y = random.randrange(45, HEIGHT - self.rect.height - 25)
         self.dead = False
         self.flash = 0
+        self.fire_cd = fire_cd
+        self.fire_timer = 500.0 if fire_cd is not None else 0.0
 
     def update(self, dt):
         self.rect.x -= int(self.speed)
         self.flash = max(0, self.flash - dt)
-
         if self.rect.right < -80:
             self.dead = True
+        bullets = []
+        if self.fire_cd is not None and not self.dead:
+            self.fire_timer -= dt
+            if self.fire_timer <= 0:
+                self.fire_timer += self.fire_cd
+                bullets.append(EnemyBullet(self.rect.left, self.rect.centery, -max(3.5, self.speed), 0))
+        return bullets
 
     def damage(self):
         self.hp -= 1
@@ -778,7 +801,7 @@ class Enemy:
 class TrainEnemy:
     """A ship that travels in a sinusoidal wave, chained in a formation."""
 
-    def __init__(self, index, speed, start_x, center_y):
+    def __init__(self, index, speed, start_x, center_y, fire_cd=None):
         self.image = random.choice(ASSETS["enemies"])
         self.speed = speed
         # Each ship is staggered behind the lead by index * spacing
@@ -789,6 +812,8 @@ class TrainEnemy:
         self.score = TRAIN_SCORE
         self.big = False
         self.flash = 0
+        self.fire_cd = fire_cd
+        self.fire_timer = 500.0 if fire_cd is not None else 0.0
         self.rect = self.image.get_rect()
         self._sync_rect()
 
@@ -808,6 +833,13 @@ class TrainEnemy:
         self._sync_rect()
         if self.rect.right < -80:
             self.dead = True
+        bullets = []
+        if self.fire_cd is not None and not self.dead:
+            self.fire_timer -= dt
+            if self.fire_timer <= 0:
+                self.fire_timer += self.fire_cd
+                bullets.append(EnemyBullet(self.rect.left, self.rect.centery, -max(3.5, self.speed), 0))
+        return bullets
 
     def damage(self):
         self.hp -= 1
@@ -949,7 +981,7 @@ class Game:
     def __init__(self):
         # Persistent across resets
         self.diff_cursor = 1       # index into DIFF_OPTIONS; 1 = "normal"
-        self.options_cursor = 0    # 0 = music slider, 1 = sfx slider
+        self.options_cursor = 0    # 0 = music, 1 = sfx, 2 = fullscreen
         self.menu_cursor = 0       # 0 = Start Game, 1 = Options
         self.reset(to_menu=True)
 
@@ -963,8 +995,16 @@ class Game:
         self.explosions = []
         self.powerups = []
         self.active_powerup = None      # current weapon modifier
-        self.powerup_milestone = 0      # last 1000-pt threshold that spawned a powerup
+        self.powerup_milestone = 0      # last 10000-pt threshold that spawned a powerup
         self._powerup_rng = random.Random(20250626)
+        self.level = 1
+        self.bg_ground_img = None
+        self.bg_top_img = None
+        self.bg_ground_scroll = 0.0
+        self.level_clear_timer = 0
+        self.level_clear_fade = 0
+        self.level_fadein_alpha = 0
+        self._load_level_bg()
 
         self.score = 0
         self.total_spawned = 0
@@ -1219,12 +1259,15 @@ class Game:
             if self.special_count % 2 == 1:
                 self._spawn_train()
             else:
-                self.enemies.append(Enemy(self.enemy_speed, big=True))
+                fire_cd = 5000 / self.level if self.level >= 2 else None
+                self.enemies.append(Enemy(self.enemy_speed, big=True, fire_cd=fire_cd))
         else:
-            self.enemies.append(Enemy(self.enemy_speed, big=False))
+            fire_cd = 5000 / self.level if self.level >= 2 else None
+            self.enemies.append(Enemy(self.enemy_speed, big=False, fire_cd=fire_cd))
 
     def _spawn_train(self):
-        count = max(2, int(self.enemy_speed))
+        count = min(6, max(2, int(self.enemy_speed)))
+        fire_cd = 5000 / self.level if self.level >= 2 else None
         start_x = WIDTH + 60
         center_y = random.randrange(
             int(HEIGHT * 0.25), int(HEIGHT * 0.75)
@@ -1232,7 +1275,7 @@ class Game:
         train_speed = self.enemy_speed * 0.9
         for i in range(count):
             self.enemies.append(
-                TrainEnemy(i, train_speed, start_x, center_y)
+                TrainEnemy(i, train_speed, start_x, center_y, fire_cd=fire_cd)
             )
 
     def update(self, dt):
@@ -1249,6 +1292,10 @@ class Game:
 
         if self.state == "intro":
             self.update_cutscene(dt)
+            return
+
+        if self.state == "level_clear":
+            self.update_level_clear(dt)
             return
 
         if self.state != "playing":
@@ -1269,6 +1316,12 @@ class Game:
             if keys[pygame.K_SPACE]:
                 self.fire()
 
+        # Scroll level background and decay fade-in from black
+        if self.bg_ground_img:
+            self.bg_ground_scroll += dt * 0.25
+        if self.level_fadein_alpha > 0:
+            self.level_fadein_alpha = max(0, self.level_fadein_alpha - int(dt * 0.4))
+
         # While a boss is on screen, hold back all other spawns.
         self.spawn_timer += dt
         if not self.boss_active and self.spawn_timer >= self.spawn_delay:
@@ -1287,7 +1340,9 @@ class Game:
             bullet.update()
 
         for enemy in self.enemies:
-            enemy.update(dt)
+            new_bullets = enemy.update(dt)
+            if new_bullets:
+                self.enemy_bullets.extend(new_bullets)
 
         if self.boss and not self.boss.dead:
             self.enemy_bullets.extend(self.boss.fire(dt))
@@ -1329,6 +1384,7 @@ class Game:
                             self.boss = None
                             self.player.lives += 1   # reward an extra life
                             self._boss_death_fx(enemy)
+                            self._start_level_clear()
                         else:
                             self.explosions.append(Explosion(enemy.rect.center))
                         play(BOOM_SOUND)
@@ -1395,6 +1451,106 @@ class Game:
             self.explosions.append(Explosion((cx + ox, cy + oy)))
         self.screen_shake = 600
 
+    def _load_level_bg(self):
+        def _load_half(filename):
+            path = _asset(os.path.join("gfx", filename))
+            try:
+                if os.path.exists(path):
+                    raw = pygame.image.load(path).convert_alpha()
+                    return pygame.transform.scale(
+                        raw, (raw.get_width() // 2, raw.get_height() // 2)
+                    )
+            except pygame.error:
+                pass
+            return None
+
+        self.bg_ground_img = _load_half(f"background{self.level:02d}bottom.png")
+        self.bg_top_img    = _load_half(f"background{self.level:02d}top.png")
+
+    def _start_level_clear(self):
+        self.state = "level_clear"
+        self.level_clear_timer = 0
+        self.level_clear_fade = 0
+        self.enemies = []
+        self.bullets = []
+        self.enemy_bullets = []
+        self.powerups = []
+        self.boss = None
+        self.boss_active = False
+        self.player.invuln_timer = 99999
+        self.player.blink_timer = 0
+        stop_music()
+        if LEVEL_CLEAR_SOUND:
+            LEVEL_CLEAR_SOUND.set_volume(VOL["music"])
+            LEVEL_CLEAR_SOUND.play()
+
+    def update_level_clear(self, dt):
+        self.screen_shake = max(0, self.screen_shake - dt)
+        self.level_clear_timer += dt
+        if self.bg_ground_img:
+            self.bg_ground_scroll += dt * 0.25
+        self.player.rect.x += 14
+        self.player.anim_timer += dt
+        if self.player.anim_timer >= PLAYER_ANIM_MS:
+            self.player.anim_timer -= PLAYER_ANIM_MS
+            self.player.frame_idx = (self.player.frame_idx + 1) % len(self.player.frames)
+            self.player.image = self.player.frames[self.player.frame_idx]
+        for explosion in self.explosions:
+            explosion.update(dt)
+        self.explosions = [e for e in self.explosions if not e.dead]
+        if self.level_clear_timer >= 1800:
+            t = min(1.0, (self.level_clear_timer - 1800) / 700)
+            self.level_clear_fade = int(t * 255)
+        if self.level_clear_timer >= 2500:
+            self._begin_next_level()
+
+    def _begin_next_level(self):
+        score = self.score
+        lives = self.player.lives
+        powerup = self.active_powerup
+        powerup_rng = self._powerup_rng
+        powerup_milestone = self.powerup_milestone
+        speed = self.enemy_speed
+        spawn_delay = self.spawn_delay
+        total_spawned = self.total_spawned
+        special_count = self.special_count
+
+        self.level += 1
+        self.bullets = []
+        self.enemy_bullets = []
+        self.enemies = []
+        self.explosions = []
+        self.powerups = []
+        self.boss = None
+        self.boss_active = False
+        self.game_over = False
+        self.death_timer = 0
+        self.screen_shake = 0
+        self.spawn_timer = 0
+        self.last_fire = 0
+        self.game_over_cursor = 0
+
+        self.score = score
+        self.active_powerup = powerup
+        self._powerup_rng = powerup_rng
+        self.powerup_milestone = powerup_milestone
+        self.enemy_speed = speed
+        self.spawn_delay = spawn_delay
+        self.total_spawned = total_spawned
+        self.special_count = special_count
+
+        self.player = Player(lives=lives)
+        self.player.invuln_timer = 1500
+
+        self.bg_ground_scroll = 0.0
+        self._load_level_bg()
+
+        set_level_music(self.level)
+        self.state = "playing"
+        self.level_fadein_alpha = 255
+        self.level_clear_timer = 0
+        self.level_clear_fade = 0
+
     def draw_background(self, surf, ox=0, oy=0):
         surf.fill((2, 4, 18))
 
@@ -1410,21 +1566,45 @@ class Game:
         for y in range(0, HEIGHT, 4):
             pygame.draw.line(surf, (0, 0, 8), (0, y), (WIDTH, y))
 
+        if self.bg_ground_img:
+            img = self.bg_ground_img
+            iw = img.get_width()
+            scroll = int(self.bg_ground_scroll) % max(1, iw)
+            x = -scroll
+            while x < WIDTH + iw:
+                surf.blit(img, (int(x + ox), HEIGHT - img.get_height()))
+                x += iw
+
+        if self.bg_top_img:
+            img = self.bg_top_img
+            iw = img.get_width()
+            scroll = int(self.bg_ground_scroll) % max(1, iw)
+            x = -scroll
+            while x < WIDTH + iw:
+                surf.blit(img, (int(x + ox), 0))
+                x += iw
+
     def draw_ui(self, surf):
         font = get_font(18)
         small = get_font(14)
 
         x, y = 14, 10
 
-        # Score line
-        for text_str, color in [
-            (f"SCORE {self.score:07d}", (120, 255, 160)),
-        ]:
-            shadow = font.render(text_str, False, (0, 0, 0))
-            text = font.render(text_str, False, color)
-            surf.blit(shadow, (x + 2, y + 2))
-            surf.blit(text, (x, y))
-            y += 23
+        # Level
+        level_str = f"LEVEL {self.level}"
+        shadow = font.render(level_str, False, (0, 0, 0))
+        level_surf = font.render(level_str, False, (120, 200, 255))
+        surf.blit(shadow, (x + 2, y + 2))
+        surf.blit(level_surf, (x, y))
+        y += 23
+
+        # Score
+        score_str = f"SCORE {self.score:07d}"
+        shadow = font.render(score_str, False, (0, 0, 0))
+        score_surf = font.render(score_str, False, (120, 255, 160))
+        surf.blit(shadow, (x + 2, y + 2))
+        surf.blit(score_surf, (x, y))
+        y += 23
 
         # Ship icons (one per remaining life)
         icon = pygame.transform.scale(ASSETS["player"][0], (30, 20))
@@ -1700,7 +1880,7 @@ class Game:
     def draw(self, target):
         ox = oy = 0
 
-        if self.state == "playing" and self.screen_shake > 0:
+        if self.state in ("playing", "level_clear") and self.screen_shake > 0:
             strength = int(7 * (self.screen_shake / 420))
             ox = random.randint(-strength, strength)
             oy = random.randint(-strength, strength)
@@ -1728,6 +1908,12 @@ class Game:
 
             self.draw_ui(world)
 
+            if self.level_fadein_alpha > 0:
+                fadein = pygame.Surface((WIDTH, HEIGHT))
+                fadein.fill((0, 0, 0))
+                fadein.set_alpha(self.level_fadein_alpha)
+                world.blit(fadein, (0, 0))
+
         elif self.state == "intro":
             self.draw_cutscene(world)
 
@@ -1743,9 +1929,21 @@ class Game:
         elif self.state == "game_over":
             for explosion in self.explosions:
                 explosion.draw(world)
-
-            self.draw_ui(world)
             self.draw_game_over(world)
+
+        elif self.state == "level_clear":
+            for explosion in self.explosions:
+                explosion.draw(world)
+            self.player.draw(world)
+            self.draw_ui(world)
+            font_lc = get_font(52, bold=True)
+            txt_lc = font_lc.render(f"LEVEL {self.level} CLEAR!", False, (255, 230, 80))
+            world.blit(txt_lc, txt_lc.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
+            if self.level_clear_fade > 0:
+                fade_surf = pygame.Surface((WIDTH, HEIGHT))
+                fade_surf.fill((0, 0, 0))
+                fade_surf.set_alpha(self.level_clear_fade)
+                world.blit(fade_surf, (0, 0))
 
         target.blit(world, (ox, oy))
 
@@ -1838,6 +2036,12 @@ def main():
                             game.reset(to_menu=True)
                         else:
                             running = False
+
+                elif game.state == "level_clear":
+                    if event.key == pygame.K_ESCAPE:
+                        game.reset(to_menu=True)
+                    elif event.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER):
+                        game._begin_next_level()
 
                 elif game.state == "playing":
                     if event.key == pygame.K_ESCAPE:
