@@ -2,7 +2,7 @@
 
 **Aimer 8** is a 16-bit style side-scrolling space shooter built with **Python** and **Pygame**.
 
-Pilot a pixel-art spaceship, blast through increasingly dangerous enemy waves, dodge formation attacks, collect powerups, and survive as long as you can.
+Pilot a pixel-art spaceship, blast through increasingly dangerous enemy waves, defeat bosses to advance levels, collect powerups, and survive as long as you can.
 
 ## Screenshots
 
@@ -31,24 +31,39 @@ Pilot a pixel-art spaceship, blast through increasingly dangerous enemy waves, d
 - Procedurally generated retro laser and explosion sound effects
 - Background music support:
   - `audio/main.mp3` — main menu and game-over screen
-  - `audio/level.mp3` — during gameplay
+  - `audio/levelNN.mp3` — per-level tracks, falls back to `level01.mp3` if not found
+  - `audio/level_clear.mp3` — short jingle played on boss defeat
   - `audio/spooling.mp3` — engine spool-up during the launch cutscene
 - **Hangar launch cutscene** at game start (skippable with Space/Enter)
 - Starfield background with parallax scrolling
-- Distant planets, nebulae, and space station background elements (seeded, deterministic order each run)
+- **Per-level scrolling background images** (tiled, alpha-transparent, faster parallax layer):
+  - `gfx/backgroundNNbottom.png` — terrain strip anchored to the bottom of the screen
+  - `gfx/backgroundNNtop.png` — optional sky strip anchored to the top of the screen
+  - Missing images are silently ignored; any level can have zero, one, or both layers
+- Distant planets, nebulae, and space station background elements (seeded, deterministic order)
 - 8 different enemy ship sprites, picked at random
 - Enemy progression:
   - Normal enemies spawn from the right
   - Every **15 spawns** — a special wave: **enemy trains** and **large armored enemies** alternate
-  - Sinusoidal **enemy train** formation, ship count grows with speed
+  - Sinusoidal **enemy train** formation, up to **6 ships**, count grows with speed
   - **Large armored enemy** takes 5 hits to destroy
   - Every **90 spawns** — enemy speed increases
+- **Enemy return fire** (from Level 2 onward):
+  - Every enemy ship fires back once every **5 seconds ÷ level number**
+  - First shot fires 0.5 seconds after the ship enters the screen
+  - Bullet speed is never slower than the ship that fired it
 - **Boss monster** every **60 spawns**:
   - All other spawns pause until the boss is destroyed
   - Glides in, hovers and bobs, and takes 40 hits (with a health bar)
   - Attacks with a leftward fan of bullets; the pattern is **seeded and learnable**
   - Cannot be killed by ramming — contact (and its bullets) cost the player a life
-  - Destroying it awards **+1 extra life** and a big score
+  - Destroying it awards **+1 extra life**, a big score bonus, and triggers **Level Clear**
+- **Level Clear sequence** on boss defeat:
+  - Music stops; the level-clear jingle plays
+  - Player ship accelerates off the right edge; **LEVEL X CLEAR!** is displayed
+  - Screen fades to black, then fades into the next level
+  - Score, lives, active powerup, and enemy speed carry over
+  - Space/Enter skips the sequence; ESC returns to the main menu
 - **Powerup system** — a powerup spawns every **10 000 points**:
   - **Triple Beam** — fires 3 vertically stacked lasers per shot
   - **Spread** — fires forward + straight up + straight down simultaneously
@@ -56,10 +71,10 @@ Pilot a pixel-art spaceship, blast through increasingly dangerous enemy waves, d
   - **Extra Life** — grants +1 life instantly
   - Collecting a new powerup replaces the previous one (extra life is always instant)
   - The active powerup type is never repeated as the next spawn
-  - Active powerup shown as icon + label in the HUD
-- Ship-icon HUD (remaining lives shown as ship sprites)
+  - Active powerup shown as icon + label in the top-right HUD
+- HUD displays: current **level**, score, remaining lives (ship icons), and active powerup
 - Player blink and invulnerability after taking damage
-- **2-second death delay** — gameplay continues for 2 seconds after the last life is lost before the game over screen appears
+- **2-second death delay** — gameplay continues for 2 seconds after the last life is lost
 - Screen shake on collision
 - **Game over screen** with `gfx/gameover.png` image and a navigable menu (Restart / Main Menu / Exit Game)
 
@@ -80,9 +95,16 @@ Aimer-8/
     font.otf
     icon.ico
     icon.png
+    background01bottom.png   ← optional, level 1 terrain
+    background02bottom.png   ← optional, level 2 terrain
+    background03bottom.png   ← optional
+    background03top.png      ← optional, level 3 sky layer
+    ...
   audio/
     main.mp3
-    level.mp3
+    level01.mp3
+    level02.mp3              ← optional, falls back to level01
+    level_clear.mp3
     spooling.mp3
 ```
 
@@ -96,13 +118,20 @@ Place these files in the `gfx/` folder:
 - `font.otf` — custom bitmap/pixel font used for all in-game text; falls back to Consolas/monospace if missing.
 - `icon.ico` / `icon.png` — window and taskbar icon (generated by `create_icon.py`).
 
+### Optional per-level backgrounds
+
+Files named `gfx/backgroundNNbottom.png` and `gfx/backgroundNNtop.png` (e.g. `background02bottom.png`) are loaded for the corresponding level. They must be RGBA PNGs — the alpha channel lets the starfield show through. Each image is scaled to 50% of its source size on load and tiled horizontally across the screen.
+
 ### Required audio
 
 Place these files in the `audio/` folder:
 
 - `main.mp3` — loops during the main menu and game-over screen.
-- `level.mp3` — loops during gameplay.
+- `level01.mp3` — loops during gameplay; used as fallback for any level without its own track.
+- `level_clear.mp3` — played once when the boss is defeated.
 - `spooling.mp3` — one-shot engine spool-up played during the launch cutscene.
+
+Additional level tracks (`level02.mp3`, `level03.mp3`, …) are loaded if present; missing tracks silently fall back to `level01.mp3`.
 
 Sound effects for lasers and explosions are generated in code; no external SFX files are required beyond the above.
 
@@ -142,21 +171,22 @@ The compiled binary will appear in `dist/Aimer8.exe`.
 | Navigate menus | Arrow Keys / WASD |
 | Confirm / Select | Enter |
 | Back / Quit | Escape |
-| Skip cutscene | Space or Enter |
+| Skip cutscene / level clear | Space or Enter |
 
 ## Gameplay Rules
 
 - Destroy enemies to increase your score.
 - Normal enemies are destroyed with **1 hit** (100 pts).
 - Every **15 spawns** a special wave enters, alternating between two types:
-  - **Train formation** — ships travel in a sinusoidal wave pattern (150 pts each).
+  - **Train formation** — up to 6 ships travel in a sinusoidal wave pattern (150 pts each).
   - **Large enemy** — takes **5 hits** (700 pts).
 - Every **60 spawns** a **boss monster** appears (3 000 pts):
   - All other spawns pause until the boss is destroyed.
   - Takes **40 hits** and fires a learnable, fixed bullet-fan pattern.
   - Ramming it or being hit by its bullets costs a life; cannot be killed by ramming.
-  - Destroying the boss grants **+1 extra life**.
+  - Destroying the boss grants **+1 extra life** and starts the **Level Clear** sequence.
 - Every **90 enemies**, all enemy speeds increase.
+- From **Level 2** onward, enemy ships fire back. Fire rate = one shot every **5 000 ms ÷ level** (e.g. every 2.5 s on level 2, every 1 s on level 5).
 - Every **10 000 points** a **powerup** floats in from the right — fly into it to collect it.
 - Colliding with an enemy or a boss bullet removes one ship (life).
 - When the last life is lost, gameplay continues for **2 seconds** before the game over screen appears.
