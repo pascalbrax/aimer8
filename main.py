@@ -22,7 +22,8 @@ TITLE_LOGO = _asset(os.path.join("gfx", "title.png"))
 GAMEOVER_IMG = _asset(os.path.join("gfx", "gameover.png"))
 GAME_NAME = "Aimer 8"
 
-ASSET_PATH = _asset(os.path.join("gfx", "sprites.png"))
+ASSET_PATH       = _asset(os.path.join("gfx", "sprites.png"))
+BOSS_SPRITES_PATH = _asset(os.path.join("gfx", "sprites_boss.png"))
 
 MAIN_MUSIC = _asset(os.path.join("audio", "main.mp3"))
 LEVEL_MUSIC = _asset(os.path.join("audio", "level01.mp3"))  # fallback
@@ -384,6 +385,21 @@ ENEMY_SRC = [
 ]
 BIG_ENEMY_SRC = (553, 282, 279, 195)
 BOSS_SRC = (851, 234, 384, 290)
+# Sprite locations on gfx/sprites_boss.png — 5 extra bosses (green/red/yellow/blue/gray)
+BOSS_EXTRA_SRC = [
+    ( 68,  31, 634, 466),  # 0: green
+    (701,  13, 687, 516),  # 1: red
+    ( 20, 547, 500, 480),  # 2: yellow
+    (519, 532, 400, 505),  # 3: blue
+    (918, 548, 512, 495),  # 4: gray
+]
+BOSS_EXTRA_COLORS = [
+    ((20, 130,  30), ( 60, 220,  80), (210, 255, 210)),  # green
+    ((140,  20,  20), (255,  60,  40), (255, 210, 200)),  # red
+    ((150,  90,   0), (255, 200,  30), (255, 255, 190)),  # yellow
+    (( 20,  40, 160), ( 50, 120, 255), (190, 210, 255)),  # blue
+    (( 70,  75,  85), (155, 160, 175), (230, 232, 240)),  # gray
+]
 BULLET_SRC = [(35, 627, 109, 29), (197, 624, 106, 35)]
 EXPLOSION_SRC = [
     (358, 603, 88, 75), (489, 585, 119, 104), (643, 572, 139, 127),
@@ -428,6 +444,9 @@ def load_assets():
         "station": None,
         "nebulae": [],
         "powerups": [make_fallback_powerup(i) for i in range(4)],
+        "extra_bosses": [
+            make_fallback_enemy(size=(180, 140), color=c[1]) for c in BOSS_EXTRA_COLORS
+        ],
     }
 
     if not os.path.exists(ASSET_PATH):
@@ -456,22 +475,32 @@ def load_assets():
         print("Sprite sheet loaded, but slicing failed. Using fallback sprites.")
         print(exc)
 
+    try:
+        if os.path.exists(BOSS_SPRITES_PATH):
+            boss_sheet = pygame.image.load(BOSS_SPRITES_PATH).convert_alpha()
+            assets["extra_bosses"] = [
+                crop_alpha_fit(boss_sheet, r, (200, 150)) for r in BOSS_EXTRA_SRC
+            ]
+    except Exception as exc:
+        print(f"Could not load boss sprite sheet: {exc}")
+
     return assets
 
 
 ASSETS = load_assets()
 
 
-def make_boss_bullet():
-    """A small round energy orb used for the boss's bullets (direction-agnostic)."""
+def make_boss_bullet(outer=(255, 70, 40), inner=(255, 170, 60), core=(255, 255, 210)):
+    """A small round energy orb used for boss bullets."""
     s = pygame.Surface((14, 14), pygame.SRCALPHA)
-    pygame.draw.circle(s, (255, 70, 40), (7, 7), 7)
-    pygame.draw.circle(s, (255, 170, 60), (7, 7), 4)
-    pygame.draw.circle(s, (255, 255, 210), (7, 7), 2)
+    pygame.draw.circle(s, outer, (7, 7), 7)
+    pygame.draw.circle(s, inner, (7, 7), 4)
+    pygame.draw.circle(s, core,  (7, 7), 2)
     return s
 
 
-BOSS_BULLET_IMG = make_boss_bullet()
+BOSS_BULLET_IMG  = make_boss_bullet()
+BOSS_BULLET_IMGS = [make_boss_bullet(*c) for c in BOSS_EXTRA_COLORS]
 
 
 # ------------------------------------------------------------
@@ -713,8 +742,8 @@ class Powerup:
 class EnemyBullet:
     """A boss projectile travelling along an arbitrary (vx, vy) vector."""
 
-    def __init__(self, x, y, vx, vy):
-        self.image = BOSS_BULLET_IMG
+    def __init__(self, x, y, vx, vy, img=None):
+        self.image = img if img is not None else BOSS_BULLET_IMG
         self.vx = vx
         self.vy = vy
         self.fx = float(x)
@@ -863,8 +892,14 @@ class Boss:
 
     is_boss = True
 
-    def __init__(self, speed):
-        self.image = ASSETS["boss"]
+    def __init__(self, speed, sprite_idx=None):
+        if sprite_idx is not None:
+            idx = sprite_idx % len(ASSETS["extra_bosses"])
+            self.image      = ASSETS["extra_bosses"][idx]
+            self.bullet_img = BOSS_BULLET_IMGS[idx % len(BOSS_BULLET_IMGS)]
+        else:
+            self.image      = ASSETS["boss"]
+            self.bullet_img = BOSS_BULLET_IMG
         self.rect = self.image.get_rect()
         self.rect.left = WIDTH + 20
         self.base_y = HEIGHT // 2
@@ -922,7 +957,7 @@ class Boss:
             rad = math.radians(angle)
             vx = math.cos(rad) * BOSS_BULLET_SPEED
             vy = math.sin(rad) * BOSS_BULLET_SPEED
-            bullets.append(EnemyBullet(ox, oy, vx, vy))
+            bullets.append(EnemyBullet(ox, oy, vx, vy, img=self.bullet_img))
 
         play(LASER_SOUND)
         return bullets
@@ -1250,7 +1285,8 @@ class Game:
         # and only one boss may be on screen at a time.
         if self.total_spawned % BOSS_EVERY == 0 and not self.boss_active:
             self.boss_active = True
-            self.boss = Boss(self.enemy_speed)
+            sprite_idx = (self.level - 2) % 5 if self.level >= 2 else None
+            self.boss = Boss(self.enemy_speed, sprite_idx=sprite_idx)
             self.enemies.append(self.boss)
         # Every TRAIN_EVERY spawns a special wave appears; trains and big
         # enemies strictly alternate (train, big, train, big, ...).
